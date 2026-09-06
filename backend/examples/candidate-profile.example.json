@@ -1,0 +1,25 @@
+{
+  "years_experience": 4,
+  "summary": "Python 백엔드와 API 개발 경험을 가진 예시 후보자",
+  "skills": {
+    "backend": ["Python", "Django", "FastAPI", "REST API"],
+    "database": ["PostgreSQL", "Redis", "SQLAlchemy"],
+    "infrastructure": ["AWS", "Docker", "GitHub Actions"],
+    "messaging": ["Kafka"],
+    "quality": ["TDD", "BDD", "test automation", "code review", "pytest"],
+    "ai_product": ["LLM API", "prompt engineering"],
+    "client": ["React", "TypeScript"]
+  },
+  "achievements": [
+    {
+      "company": "ExampleCo",
+      "evidence": "REST API 응답 속도와 배포 안정성을 개선한 익명 예시 성과"
+    }
+  ],
+  "skill_gaps": {
+    "no_professional_experience": ["Go", "gRPC"],
+    "limited": ["Kubernetes", "Spring", "React", "TypeScript"],
+    "none": ["PyTorch", "model training", "fine-tuning", "DPO", "RLHF"]
+  },
+  "resume_versions": ["backend", "backend_ai", "product_engineer"]
+}
