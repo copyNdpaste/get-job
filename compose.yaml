@@ -1,0 +1,117 @@
+name: get-job
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jobdb}
+      POSTGRES_USER: ${POSTGRES_USER:-jobapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jobapp:local-development-only@db:5432/jobdb}
+      APP_ENV: ${APP_ENV:-development}
+      BACKEND_CORS_ORIGINS: http://localhost:41739,http://127.0.0.1:41739
+      CANDIDATE_PROFILE_PATH: ${CANDIDATE_PROFILE_PATH:-/data/candidate-profile.local.json}
+      DIRECT_ATS_BOARD_PATH: ${DIRECT_ATS_BOARD_PATH:-/data/ats-boards.local.json}
+      RESUME_DIRECTORY: ${RESUME_DIRECTORY:-/data/generated-resumes.local}
+      CRAWLER_MAX_CONCURRENCY: ${CRAWLER_MAX_CONCURRENCY:-2}
+      SARAMIN_API_KEY: ${SARAMIN_API_KEY:-}
+      AI_ENABLED: ${AI_ENABLED:-true}
+      AI_PROVIDER: ${AI_PROVIDER:-openai-compatible}
+      AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234}
+      AI_MODEL: ${AI_MODEL:-auto}
+      AI_ALLOW_REMOTE: ${AI_ALLOW_REMOTE:-false}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-120}
+      AI_ANALYSIS_FAST_MODEL: ${AI_ANALYSIS_FAST_MODEL:-auto}
+      AI_ANALYSIS_REVIEW_MODEL: ${AI_ANALYSIS_REVIEW_MODEL:-}
+      AI_ANALYSIS_MAX_OUTPUT_TOKENS: ${AI_ANALYSIS_MAX_OUTPUT_TOKENS:-1200}
+      AI_ANALYSIS_PROMPT_BYTES: ${AI_ANALYSIS_PROMPT_BYTES:-12000}
+      AI_ANALYSIS_DAILY_BUDGET: ${AI_ANALYSIS_DAILY_BUDGET:-100000}
+      AI_ANALYSIS_DAILY_REVIEWS: ${AI_ANALYSIS_DAILY_REVIEWS:-5}
+      AI_ANALYSIS_BATCH_SIZE: ${AI_ANALYSIS_BATCH_SIZE:-10}
+      AI_ANALYSIS_BATCH_REVIEWS: ${AI_ANALYSIS_BATCH_REVIEWS:-2}
+      AI_ANALYSIS_MIN_FIT: ${AI_ANALYSIS_MIN_FIT:-60}
+      AI_ANALYSIS_AFTER_CRAWL: ${AI_ANALYSIS_AFTER_CRAWL:-false}
+      DAILY_RECOMMENDATION_LIMIT: ${DAILY_RECOMMENDATION_LIMIT:-10}
+      DAILY_RECOMMENDATION_MIN_FIT: ${DAILY_RECOMMENDATION_MIN_FIT:-70}
+      DAILY_RECOMMENDATION_MIN_VALUE: ${DAILY_RECOMMENDATION_MIN_VALUE:-70}
+      DAILY_RECOMMENDATION_COOLDOWN_DAYS: ${DAILY_RECOMMENDATION_COOLDOWN_DAYS:-14}
+      COMPANY_ENRICHMENT_MAX_GROUPBY: ${COMPANY_ENRICHMENT_MAX_GROUPBY:-25}
+      COMPANY_ENRICHMENT_MAX_DART: ${COMPANY_ENRICHMENT_MAX_DART:-50}
+      COMPANY_FACTS_REFRESH_DAYS: ${COMPANY_FACTS_REFRESH_DAYS:-7}
+      DART_API_KEY: ${DART_API_KEY:-}
+      DART_CACHE_DIR: ${DART_CACHE_DIR:-.cache/dart}
+      SLACK_NOTIFY_ENABLED: ${SLACK_NOTIFY_ENABLED:-false}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
+      DISPLAY: :99
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+      - ./data:/data:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    command: ["sh", "-c", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & alembic upgrade head && python -m app.seed && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+
+  scheduler:
+    build:
+      context: ./backend
+    environment:
+      DAILY_DIGEST_ENABLED: ${DAILY_DIGEST_ENABLED:-true}
+      DAILY_DIGEST_TIMES: ${DAILY_DIGEST_TIMES:-10:00,13:00,17:00}
+      DAILY_DIGEST_TIMEZONE: ${DAILY_DIGEST_TIMEZONE:-Asia/Seoul}
+      DAILY_SCHEDULER_API_URL: http://backend:8000
+      DAILY_CRAWL_MAX_JOBS: ${DAILY_CRAWL_MAX_JOBS:-5000}
+      DIRECT_ATS_BOARD_PATH: ${DIRECT_ATS_BOARD_PATH:-/data/ats-boards.local.json}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app:ro
+      - ./data:/data:ro
+    command: ["python", "-m", "app.scheduler"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-41739}:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_VOLUME_NAME:-job-analyzer_postgres_data}
+    external: true
+  frontend_node_modules:
+    name: get-job-frontend-node-modules
