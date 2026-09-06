@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173d32">
+  <meta name="description" content="get-job의 데이터 수집, 정규화, 규칙 점수, LangChain Core와 LangGraph 분석 흐름을 배우는 인터랙티브 가이드.">
+  <title>공고에서 지원 전략까지 — get-job 시스템 가이드</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./guide.css">
+  <script src="./guide.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<aside class="sidebar">
+  <a class="brand" href="#overview" aria-label="get-job 가이드 처음으로"><span class="brand-icon">g<span>↗</span></span><span>get-job<small>SYSTEM GUIDE</small></span></a>
+  <div class="nav-label">서비스를 이해하는 7단계</div>
+  <nav aria-label="페이지 목차">
+    <a href="#overview" aria-current="location"><span>01</span> 전체 지도 <i>↗</i></a>
+    <a href="#concepts"><span>02</span> 두 도구의 역할 <i>↗</i></a>
+    <a href="#sources"><span>03</span> 데이터의 출발점 <i>↗</i></a>
+    <a href="#journey"><span>04</span> 공고 한 건 따라가기 <i>↗</i></a>
+    <a href="#routing"><span>05</span> AI의 분기 체험 <i>↗</i></a>
+    <a href="#budget"><span>06</span> 토큰과 비용 관리 <i>↗</i></a>
+    <a href="#implementation"><span>07</span> 활용과 구현 근거 <i>↗</i></a>
+  </nav>
+  <div class="sidebar-note"><span class="small-dot"></span> 현재 코드 기준 안내<p>쉬운 설명부터 실제 구현까지.<br>위에서 아래로 따라가 보세요.</p><small>기준일 · 2026.09.06<br>가상 예시 · 실제 AI 호출 없음</small></div>
+  <button class="print-button" id="print-guide" type="button">↓ 인쇄 / PDF로 저장</button>
+</aside>
+<div class="page-shell">
+  <header class="topline"><span>PROJECT NOTE <span class="slash">/</span> DATA & AI</span><a href="#routing">AI 흐름 직접 체험하기 <span aria-hidden="true">↗</span></a></header>
+  <main id="main">
+    <section class="overview section" id="overview" aria-labelledby="overview-title">
+      <div class="eyebrow"><span class="section-number">01</span> THE BIG PICTURE</div>
+      <div class="intro-row"><div><h1 id="overview-title">채용 공고가<br><em>지원 전략</em>이 되기까지.</h1><p class="lead">흩어진 공고를 같은 형식으로 모으고, 내 경력과 비교합니다.<br class="desktop-break"> 코드는 정보를 정리하고, AI는 필요한 부분의 해석을 돕습니다.</p></div><div class="intro-stamp"><span>수집 → 이해 → 활용</span><b>데이터가 먼저,<br>AI는 필요한 만큼.</b><small>get-job 분석 시스템</small></div></div>
+      <div class="map-frame">
+        <div class="frame-heading"><h2>전체 흐름을 한 장으로</h2><div class="legend"><span><i class="dot code"></i> 코드 처리</span><span><i class="dot ai"></i> 선택적 AI</span><span><i class="dot use"></i> 사람의 활용</span></div></div>
+        <p class="interaction-hint">단계를 누르면 입력 → 처리 → 결과를 확인할 수 있어요.</p>
+        <div class="pipeline-map" role="group" aria-label="데이터 처리 단계 선택">
+          <button type="button" class="map-node selected" data-stage="0" aria-pressed="true" aria-controls="stage-detail"><span class="node-index">01 <i>↘</i></span><span class="node-icon" aria-hidden="true">◎</span><strong>수집</strong><small>여러 채용 소스</small></button>
+          <button type="button" class="map-node" data-stage="1" aria-pressed="false" aria-controls="stage-detail"><span class="node-index">02 <i>↘</i></span><span class="node-icon" aria-hidden="true">≋</span><strong>정규화</strong><small>같은 항목으로 정리</small></button>
+          <button type="button" class="map-node" data-stage="2" aria-pressed="false" aria-controls="stage-detail"><span class="node-index">03 <i>↘</i></span><span class="node-icon" aria-hidden="true">▤</span><strong>저장·중복 묶기</strong><small>DB와 변경 이력</small></button>
+          <button type="button" class="map-node" data-stage="3" aria-pressed="false" aria-controls="stage-detail"><span class="node-index">04 <i>↘</i></span><span class="node-icon" aria-hidden="true">⌗</span><strong>규칙 점수</strong><small>우선순위 계산</small></button>
+          <button type="button" class="map-node ai-node" data-stage="4" aria-pressed="false" aria-controls="stage-detail"><span class="node-index">05 <i>↘</i></span><span class="node-icon" aria-hidden="true">✳</span><strong>AI 분석</strong><small>근거 해석·검증</small></button>
+          <button type="button" class="map-node use-node" data-stage="5" aria-pressed="false" aria-controls="stage-detail"><span class="node-index">06 <i>↗</i></span><span class="node-icon" aria-hidden="true">⚑</span><strong>지원 준비</strong><small>추천·비교·추적</small></button>
+        </div>
+        <div class="stage-detail" id="stage-detail" aria-live="polite" aria-atomic="true"></div>
+        <div class="side-input"><span>추가 입력</span><b>내 구조화된 경력</b> <span aria-hidden="true">→</span> 규칙 점수 · AI 근거 비교 <span class="separator">/</span> <b>공개 기업 정보</b> <span aria-hidden="true">→</span> 회사 정보 보강</div>
+      </div>
+      <div class="takeaway"><span aria-hidden="true">↳</span><p><b>추천 점수와 AI 의견은 분리됩니다.</b> 점수는 정해진 규칙으로 계산합니다. AI는 “왜 맞는지, 무엇을 더 확인할지”를 덧붙이며 점수를 바꾸지 않습니다.</p></div>
+    </section>
+
+    <section class="section" id="concepts" aria-labelledby="concepts-title">
+      <div class="eyebrow"><span class="section-number">02</span> TWO TOOLS, DIFFERENT JOBS</div>
+      <h2 id="concepts-title">LangChain과 LangGraph,<br>이름은 비슷하지만 맡는 일은 달라요.</h2>
+      <p class="section-intro">LLM은 글을 읽고 답하는 모델입니다. 두 라이브러리는 그 모델을 서비스 안에서 사용하기 위한 도구입니다. 여기서는 “질문지”와 “업무 순서표”로 이해하면 쉽습니다.</p>
+      <div class="concept-grid">
+        <article class="concept-card chain"><div class="concept-top"><span class="concept-symbol" aria-hidden="true">⌘</span><span class="pill">질문을 구성하는 도구</span></div><h3>LangChain <span>Core</span></h3><p class="analogy">“같은 양식의 질문지를 만들어요.”</p><p>공고마다 내용은 달라도, 지시·근거·응답 형식을 일정하게 구성합니다. 이 프로젝트는 LangChain 전체 중 <b>Core의 프롬프트·메시지 기능</b>을 사용합니다.</p><div class="prompt-sheet"><div><span>지시</span>제공된 근거 안에서만 비교해 주세요.</div><div><span>재료</span>공고 요구사항 + 선택한 경력 항목</div><div><span>형식</span>판정 · 근거 ID · 이유를 JSON으로</div></div><code>ChatPromptTemplate → 메시지</code></article>
+        <article class="concept-card graph"><div class="concept-top"><span class="concept-symbol" aria-hidden="true">⑂</span><span class="pill">흐름을 결정하는 도구</span></div><h3>LangGraph</h3><p class="analogy">“답에 따라 다음 담당자를 정해요.”</p><p>현재 결과를 보관하고, 다음 단계를 선택합니다. 규칙으로 끝낼지, 기본 모델을 부를지, 상위 모델에게 한 번 더 검토시킬지 결정합니다.</p><div class="mini-flow"><span>준비</span><b>→</b><span>기본 분석</span><b>→</b><span>결과</span><div>모호하면 <b>↳</b> <strong>재검토 1회</strong> <b>↗</b></div></div><code>StateGraph → 노드 + 조건부 연결</code></article>
+      </div>
+      <div class="concept-bottom"><div><span>LLM</span><b>내용을 해석</b><small>설정한 로컬 모델 또는 허용된 원격 모델</small></div><i aria-hidden="true">+</i><div><span>LangChain Core</span><b>질문을 구성</b><small>이 서비스에서 실제 사용하는 범위</small></div><i aria-hidden="true">+</i><div><span>LangGraph</span><b>순서와 분기를 실행</b><small>결과를 다음 단계에 전달</small></div></div>
+      <details class="learn-more"><summary>조금 더 정확히: LangChain을 쓰면 LangGraph도 꼭 써야 하나요?</summary><p>각각 사용할 수 있습니다. LangChain은 모델·도구 통합과 에이전트 구성까지 제공하는 더 넓은 프레임워크이고, LangChain의 에이전트 기능은 LangGraph 위에 구축되어 있습니다. LangGraph는 LangChain 없이도 사용할 수 있습니다.</p><p>get-job은 <b>LangChain Core로 메시지를 만들고 LangGraph로 직접 작성한 워크플로를 실행</b>합니다. 모델 연결은 별도의 <code>LocalAIClient</code>, 응답 구조 검사는 <code>Pydantic</code>이 담당합니다.</p><p class="source-links"><a href="https://docs.langchain.com/oss/python/langchain/overview" target="_blank" rel="noreferrer">LangChain 공식 문서 ↗</a><a href="https://docs.langchain.com/oss/python/langgraph/overview" target="_blank" rel="noreferrer">LangGraph 공식 문서 ↗</a></p></details>
+    </section>
+
+    <section class="section" id="sources" aria-labelledby="sources-title">
+      <div class="eyebrow"><span class="section-number">03</span> WHERE DATA COMES FROM</div>
+      <div class="section-heading-row"><div><h2 id="sources-title">출발점은 공개 채용 정보입니다.</h2><p class="section-intro">사이트마다 구조가 달라서, 각 소스에 맞는 수집기를 둡니다.</p></div><span class="count-tag">등록 소스 <b>14</b>종</span></div>
+      <div class="source-filters" role="group" aria-label="수집 방식 필터"><button type="button" data-source="all" aria-pressed="true">전체 보기</button><button type="button" data-source="http" aria-pressed="false">공개 페이지·JSON</button><button type="button" data-source="browser" aria-pressed="false">브라우저 보조</button><button type="button" data-source="api" aria-pressed="false">공개 ATS API</button><button type="button" data-source="limited" aria-pressed="false">승인·수동 입력</button></div>
+      <p class="filter-status" id="source-count" aria-live="polite">14개 등록 소스 · 실제 수집 가능 여부는 설정과 소스 정책에 따릅니다.</p>
+      <div class="sources-grid" id="sources-grid"></div>
+      <div class="source-footnotes"><div><span class="small-label">수집 규칙</span><p>허용된 주소·경로와 소스 정책을 확인합니다. 요청 간격·수집 한도를 두고, 수동 전용 소스는 자동 수집하지 않습니다. 등록된 소스가 모두 항상 수집 중이라는 뜻은 아닙니다.</p></div><div><span class="small-label">보조 데이터</span><p><b>GroupBy 공개 기업 정보 · OpenDART</b>로 출처가 있는 기업 정보를 보강합니다. OpenDART는 키 설정이 필요합니다. 지원자 경력은 별도의 로컬 구조화 프로필에서 가져옵니다.</p></div></div>
+      <div class="schedule-strip"><span class="clock-icon" aria-hidden="true">◷</span><div><b>자동 수집을 켜면, 반복 작업도 코드가 합니다.</b><p>기본 예약 시간 10:00 · 13:00 · 17:00 / 서울 기준. 수집 완료 → 중복 묶기 → 기업·프로그램 정보 보강 → 오늘의 추천 생성.</p></div><span class="pill">AI 자동 분석은 별도 설정 · 기본 꺼짐</span></div>
+    </section>
+
+    <section class="section" id="journey" aria-labelledby="journey-title">
+      <div class="eyebrow"><span class="section-number">04</span> FOLLOW ONE JOB</div>
+      <h2 id="journey-title">공고 한 건을 따라가 볼까요?</h2><p class="section-intro">“예시테크의 Python 백엔드 공고”가 비교 가능한 데이터로 바뀌는 과정입니다. 아래 내용과 분석 결과는 이해를 돕기 위한 가상 예시입니다.</p>
+      <div class="journey-layout">
+        <div class="journey-steps" role="group" aria-label="공고 변환 단계 선택">
+          <button type="button" data-journey="0" aria-pressed="true" aria-controls="journey-content"><span>1</span><div><b>읽기</b><small>소스별 원문을 가져와요.</small></div><i>↗</i></button>
+          <button type="button" data-journey="1" aria-pressed="false" aria-controls="journey-content"><span>2</span><div><b>정리하기</b><small>같은 필드에 나누어 담아요.</small></div><i>↗</i></button>
+          <button type="button" data-journey="2" aria-pressed="false" aria-controls="journey-content"><span>3</span><div><b>비교하기</b><small>요구사항과 경력을 연결해요.</small></div><i>↗</i></button>
+          <div class="candidate-note"><span class="small-label">비교할 가상 경력</span><p>“Python·FastAPI로 주문 API를 만들고 PostgreSQL을 운영했다.”</p><small>이름·연락처 없이, 필요한 경력 근거만.</small></div>
+        </div>
+        <div class="journey-content" id="journey-content" aria-live="polite" aria-atomic="true"></div>
+      </div>
+      <div class="database-strip"><div class="db-symbol" aria-hidden="true">▤</div><div><b>같은 공고는 갱신하고, 바뀐 내용은 이력으로 남깁니다.</b><p>소스 ID·URL·회사와 제목을 확인해 저장합니다. 내용 해시가 달라지면 스냅샷을 남기고, 다른 사이트의 유사 공고는 회사·직무·경력 조건을 비교해 하나의 그룹으로 묶습니다.</p></div><code>PostgreSQL<br>SQLAlchemy</code></div>
+    </section>
+
+    <section class="section" id="routing" aria-labelledby="routing-title">
+      <div class="eyebrow"><span class="section-number">05</span> TRY THE DECISION FLOW</div>
+      <div class="section-heading-row"><div><h2 id="routing-title">AI는 언제, 몇 번 호출될까요?</h2><p class="section-intro">상황을 고르고 실행해 보세요. LangGraph가 선택하는 경로를 보여줍니다.</p></div><span class="demo-label"><i class="small-dot"></i> 설명용 시뮬레이션</span></div>
+      <div class="simulation">
+        <div class="sim-controls"><div><label for="scenario">공고의 상황</label><select id="scenario"><option value="fast">문장 해석이 필요한 일반 공고</option><option value="rules">짧은 기술명이 정확히 일치</option><option value="review">기본 분석의 근거 매칭이 모호함</option><option value="invalid">응답에 존재하지 않는 근거 ID</option><option value="cache">같은 입력의 완료 보고서가 있음</option><option value="budget">오늘의 예약 예산이 부족함</option><option value="offline">기본 모델 연결에 실패함</option></select></div><label class="toggle-label"><input type="checkbox" id="review-enabled" checked><span class="switch-track" aria-hidden="true"></span><span>재검토 모델 허용<small>데모 설정 · 서비스 기본값은 꺼짐</small></span></label><button type="button" id="run-simulation" class="primary-button">흐름 재생 <span aria-hidden="true">▶</span></button></div>
+        <div class="sim-body">
+          <div class="graph-canvas" aria-label="분석 그래프. 캐시 조회 후 준비, 기본 분석, 선택적 재검토, 결과 정리 순서입니다.">
+            <div class="cache-gate" data-graph="cache"><span>입력 해시 캐시 확인</span><b>있으면 바로 재사용 ↘</b></div>
+            <div class="flow-connector">없으면 ↓</div>
+            <div class="graph-node" data-graph="prepare"><span class="graph-number">01</span><div><code>prepare</code><strong>요구사항·경력 근거 준비</strong><small>중복 제거 · 관련 단어 검색 · 규칙 비교</small></div><span class="node-type">코드</span></div>
+            <div class="branch-line"><span>해석이 필요하면 ↓</span><small>규칙으로 끝나면 결과로 ↘</small></div>
+            <div class="graph-node model-node" data-graph="fast"><span class="graph-number">02</span><div><code>fast</code><strong>기본 모델 분석 + 응답 검증</strong><small>예산 예약 → 질문 구성 → 호출 → 근거 검사</small></div><span class="node-type">LLM × 1</span></div>
+            <div class="branch-line"><span>모호함·검증 실패 & 허용 시 ↓</span><small>명확하면 결과로 ↘</small></div>
+            <div class="graph-node review-node" data-graph="review"><span class="graph-number">03</span><div><code>review</code><strong>재검토 모델 분석 + 응답 검증</strong><small>별도 예산 확인 · 같은 근거를 한 번 더 해석</small></div><span class="node-type">LLM × 1</span></div>
+            <div class="flow-connector">성공·불확실·실패 모두 정리 ↓</div>
+            <div class="graph-node" data-graph="finalize"><span class="graph-number">04</span><div><code>finalize</code><strong>보고서와 사용량 정리</strong><small>근거 · 확인할 점 · 경로 · 호출량</small></div><span class="node-type">코드</span></div>
+          </div>
+          <aside class="sim-inspector" aria-label="시뮬레이션 실행 설명"><div class="sim-status"><span id="sim-progress">1 / 4 단계</span><span class="pill" id="sim-state">캐시 조회</span></div><div class="call-counter"><b id="sim-calls">0</b><span>모델 호출<br><small>이 경로에서의 누적 횟수</small></span></div><div class="sim-explanation" aria-live="polite" aria-atomic="true"><h3 id="sim-title"></h3><p id="sim-description"></p></div><ol id="sim-route" class="route-list" aria-label="선택한 상황의 실행 순서"></ol><div class="sim-navigation"><button type="button" id="sim-reset" class="secondary-button">처음으로</button><button type="button" id="sim-next" class="secondary-button">다음 단계 →</button></div><p class="sim-footnote">모델 응답과 예산 조건을 가정한 화면입니다. 실제 API 호출·토큰 사용·설정 변경은 없습니다.</p></aside>
+        </div>
+      </div>
+      <div class="two-notes"><div><h3>무엇을 “모호하다”고 보나요?</h3><p>요구사항 중 <code>partial</code>(부분 근거) 또는 <b>인용이 있는</b> <code>unknown</code>(확인 필요)이 절반 이상이면 재검토 후보입니다. 근거 없는 unknown만으로 상위 모델을 부르지는 않습니다.</p></div><div><h3>재검토도 확신하지 못한다면?</h3><p>확인 필요 상태로 끝냅니다. 새로운 사실을 만들어 채우거나 무한 반복하지 않습니다. 연결 실패도 상위 모델로 전환하는 이유가 되지 않습니다.</p></div></div>
+    </section>
+
+    <section class="section" id="budget" aria-labelledby="budget-title">
+      <div class="eyebrow"><span class="section-number">06</span> SMALL INPUT, BOUNDED CALLS</div>
+      <h2 id="budget-title">비용 관리는 모델 선택 전부터 시작됩니다.</h2><p class="section-intro">필요한 데이터만 보내고, 호출하기 전에 한도를 확인합니다. 아래는 현재 코드의 기본 정책이며 실제 과금 금액을 보장하는 수치는 아닙니다.</p>
+      <p class="token-explainer"><b>토큰이란?</b> AI가 글을 나누어 읽고 쓰는 작은 단위입니다. 글자 수·단어 수와 정확히 같지는 않습니다. 입력과 출력이 길고 호출이 많을수록 사용량이 늘어납니다.</p>
+      <div class="budget-metrics"><div><span>정확한 규칙 매칭·완료 캐시</span><b>0<small>회</small></b><p>이미 알 수 있는 것은 재사용</p></div><div><span>일반적인 문장 해석</span><b>1<small>회</small></b><p>기본 모델로 필요한 분석만</p></div><div><span>허용된 추가 재검토</span><b>최대 2<small>회</small></b><p>기본 1회 + 재검토 1회</p></div></div>
+      <div class="cost-layout"><div class="input-funnel"><span class="small-label">모델에 보내기 전, 문맥을 줄입니다</span><div class="funnel-wide">정규화된 공고 + 구조화된 경력</div><span class="funnel-arrow">↓</span><div class="funnel-middle">중복 요구 제거 · 관련 단어 검색</div><span class="funnel-arrow">↓</span><div class="funnel-small"><strong>요구사항 ≤ 8개</strong><strong>경력 근거 ≤ 10개</strong></div><p>어휘 검색(lexical retrieval): 공고와 경력에서 <b>겹치는 단어</b>가 많은 항목부터 고릅니다. 각 경력 항목은 최대 600자입니다.</p><small>임베딩·벡터 DB는 현재 사용하지 않습니다.</small></div><div class="limit-table"><div><span>전체 입력</span><b>12,000 UTF-8 바이트</b><small>초과 시 낮은 순위 근거·요구사항부터 축소</small></div><div><span>출력 요청 한도</span><b>1,200 토큰</b><small>제공자에 따라 제한 방식이 다름</small></div><div><span>한 번의 배치</span><b>새 분석 10건 · 재검토 2건</b><small>기본 적합도 60 이상, 지원가치 높은 순</small></div><div><span>하루 한도 / UTC</span><b>예약량 100,000 · 재검토 5회</b><small>동시 요청도 DB에서 조건부 예약</small></div></div></div>
+      <div class="model-policy"><div><span class="small-label">모델을 나누는 방식</span><h3>기본 분석과 재검토를<br>서로 다른 설정으로.</h3></div><div><p><b>공개 기본값은 로컬 AI</b>이며 재검토 모델은 비어 있습니다. 사용자가 원격 전송을 허용하고 Codex를 설정하는 경우, 기본 모델 <code>gpt-5.6-luna</code>와 재검토 모델 <code>gpt-5.6-terra</code>를 지정하는 예시가 문서에 있습니다.</p><p>대화창에서 Astra를 골라도 이 분석의 기본 모델 설정에 전파되지 않습니다. 계정의 모델 접근 권한과 제공자의 가격은 별도 확인이 필요합니다.</p></div></div>
+      <details class="learn-more budget-detail" open><summary>“예산 예약량”과 “실제 토큰”은 다른 숫자입니다.</summary><div class="reservation-formula"><span>입력 UTF-8 바이트</span><b>+</b><span>여유분 1,024</span><b>+</b><span>출력 요청 한도</span><b>=</b><strong>예약 계획 단위</strong></div><p>예약량은 호출 여부를 결정하기 위한 보수적인 계획치입니다. 실제 사용량은 제공자가 반환한 입력·출력 토큰을 따로 기록하며, 값을 주지 않으면 “알 수 없음”으로 남깁니다.</p><p>Codex의 출력 제한은 소프트 요청입니다. 숨은 문맥·추론 사용량으로 계획치를 넘을 수 있습니다. 관측한 초과분은 원장에 더해 다음 호출을 제한하지만, 이미 사용한 비용을 취소할 수는 없습니다. 실패한 예약도 자동 반환하지 않습니다.</p></details>
+      <div class="takeaway compact"><span aria-hidden="true">↳</span><p>이 한도는 <b>비용 제한 분석 API</b>에 적용됩니다. 추천 채팅·면접 준비·추가 근거 호출·기존 심층 분석은 별도 호출 경로입니다.</p></div>
+    </section>
+
+    <section class="section" id="implementation" aria-labelledby="implementation-title">
+      <div class="eyebrow"><span class="section-number">07</span> FROM OUTPUT TO ACTION</div>
+      <h2 id="implementation-title">분석의 끝은, 다음 행동이 보여야 합니다.</h2><p class="section-intro">점수만 보는 데서 끝나지 않고 공고 선택과 지원 준비로 연결합니다. 최종 판단은 원문과 실제 경험을 아는 사용자가 합니다.</p>
+      <div class="use-grid"><article><span>01 / 고르기</span><h3>어떤 공고부터 볼까?</h3><p>규칙 기반 적합도·지원가치, 오늘의 추천 목록으로 우선순위를 확인합니다.</p><small>AI 의견은 점수를 덮어쓰지 않음</small></article><article><span>02 / 준비하기</span><h3>어떤 경험을 말할까?</h3><p>요구사항별 근거와 확인할 점을 읽고, 추천 이력서 버전·면접 준비에 연결합니다.</p><small>면접 준비 AI 호출은 별도 경로</small></article><article><span>03 / 이어가기</span><h3>어디까지 지원했지?</h3><p>관심 공고와 지원 상태를 관리합니다. 원문과 기업 정보도 함께 확인합니다.</p><small>외부 제출은 사용자가 진행</small></article></div>
+      <div class="implementation-map"><div class="frame-heading"><h3>실제로는 어디에서 동작하나요?</h3><span class="pill">서비스 구성</span></div><div class="stack-row"><div><span class="stack-type">화면</span><strong>React · TypeScript</strong><small>Vite · TanStack Query</small></div><b aria-hidden="true">⇄</b><div><span class="stack-type">API와 처리</span><strong>FastAPI · Python</strong><small>수집 · 점수 · 분석 요청</small></div><b aria-hidden="true">⇄</b><div><span class="stack-type">저장</span><strong>PostgreSQL</strong><small>SQLAlchemy · Alembic</small></div></div><div class="stack-branch"><span aria-hidden="true">↳</span><b>Python 분석 워크플로</b><span>LangChain Core + LangGraph + Pydantic</span><span aria-hidden="true">→</span><b>LocalAIClient</b><span>설정한 모델 연결</span></div></div>
+      <h3 class="subheading">설명에서 코드로, 바로 연결하기</h3>
+      <div class="code-accordions">
+        <details class="learn-more"><summary><span><b>수집 · 정규화 · 저장</b><small>소스의 차이를 공통 데이터 모델로 흡수</small></span><code>crawler/</code></summary><dl class="file-list"><div><dt>backend/app/source_catalog.py</dt><dd>14개 소스와 수집 방식 등록</dd></div><div><dt>backend/app/crawler/domain.py</dt><dd>공통 형식 CollectedJob 정의</dd></div><div><dt>backend/app/crawler/normalization.py</dt><dd>공백·회사명·URL 정리, 내용 해시 생성</dd></div><div><dt>backend/app/crawler/persistence.py</dt><dd>공고 갱신과 스냅샷 저장</dd></div><div><dt>backend/app/deduplication.py</dt><dd>여러 소스의 유사 공고 그룹화</dd></div></dl></details>
+        <details class="learn-more"><summary><span><b>LangChain Core · LangGraph</b><small>고정된 노드와 조건부 분기</small></span><code>budget_analysis.py</code></summary><p><code>backend/app/budget_analysis.py</code>에 프롬프트 구성, 어휘 검색, 조건부 그래프가 있습니다. 아래는 코드의 핵심 연결 부분입니다.</p><pre><code>graph.add_node("prepare", prepare)
+graph.add_node("fast", fast)
+graph.add_node("review", review)
+graph.add_node("finalize", finalize)
+graph.add_edge(START, "prepare")
+graph.add_conditional_edges("prepare", initial_route,
+    {"fast": "fast", "finalize": "finalize"})
+graph.add_conditional_edges("fast", review_route,
+    {"review": "review", "finalize": "finalize"})
+graph.add_edge("review", "finalize")
+graph.add_edge("finalize", END)</code></pre><p><b>State(상태)</b>는 요구사항·선택된 근거·분석 결과를 담아 다음 노드로 전달합니다. <b>Node(노드)</b>는 작업 함수이고, <b>Edge(연결)</b>는 다음에 실행할 작업을 정합니다.</p></details>
+        <details class="learn-more"><summary><span><b>검증 · 캐시 · 예산</b><small>답변을 확인하고 같은 입력을 재사용</small></span><code>analysis_service.py</code></summary><dl class="file-list"><div><dt>backend/app/analysis_pipeline.py</dt><dd>Pydantic 스키마와 근거 ID 검증. 기존 심층 분석 경로도 이 파일에 존재</dd></div><div><dt>backend/app/analysis_service.py</dt><dd>입력·점수·모델·정책 해시 캐시, 상위 공고 배치 선택</dd></div><div><dt>backend/app/analysis_budget.py</dt><dd>네트워크 호출 전 원자적 예약, 실제 사용량 반영</dd></div><div><dt>backend/app/models/ai_usage.py</dt><dd>일일 예약량과 호출 원장. 원문 대신 모델·상태·숫자만 기록</dd></div><div><dt>backend/app/tasks/evaluate_analysis.py</dt><dd>가상 8개 시나리오로 0·1·2회 경로를 재현하는 오프라인 시험</dd></div></dl></details>
+        <details class="learn-more"><summary><span><b>화면 · API</b><small>한 건 분석과 배치 실행, 사용량 조회</small></span><code>/api/ai/analysis</code></summary><div class="api-list"><p><b>POST</b><code>/api/ai/analysis/jobs/{job_id}</code><span>공고 한 건 분석 · 동일 입력은 캐시 재사용</span></p><p><b>POST</b><code>/api/ai/analysis/batch</code><span>상위 공고 일괄 분석 · 기본 새 분석 최대 10건</span></p><p><b>GET</b><code>/api/ai/analysis/usage</code><span>예약량 · 실제 토큰 · 호출 수 조회</span></p></div><p>화면: <code>frontend/src/AnalysisPipeline.tsx</code>, <code>AnalysisBudgetPanel.tsx</code>. 수집 후 분석은 <code>backend/app/api/crawl.py</code>에서 옵션이 켜진 경우에만 이어집니다.</p></details>
+      </div>
+      <div class="resume-card"><div><span class="small-label">PORTFOLIO NOTE</span><h3>이력서에는<br>구현한 설계를 설명하세요.</h3><button class="secondary-button" id="copy-resume" type="button">문장 복사 <span aria-hidden="true">↗</span></button><span id="copy-status" role="status"></span></div><blockquote id="resume-text">다중 채용 소스의 정규화 공고를 분석하는 LangChain Core·LangGraph 워크플로 구현. 규칙 기반 요구사항 추출과 어휘 검색으로 입력 문맥을 줄이고, 근거 검증 결과에 따라 기본 모델과 재검토 모델을 조건부 라우팅. 입력 해시 캐시와 PostgreSQL 원자적 예산 예약으로 공고당 모델 호출을 최대 2회로 제한.</blockquote></div>
+      <div class="limitations"><h3>어디까지 구현되어 있나요?</h3><div><p><b>구현됨</b>조건부 분석 · 구조·인용 ID 검증 · 완료 보고서 캐시 · DB 예산 예약 · 호출 사용량 기록</p><p><b>현재 한계</b>단어 검색은 동의어를 놓칠 수 있고, 근거 ID가 실제로 있다는 검증이 의미적 정확성까지 보장하지는 않습니다. 긴 공고는 일부가 생략될 수 있습니다.</p><p><b>추가 고도화 영역</b>벡터 검색, 중간 체크포인트·영속 작업 큐, 실제 모델의 근거 매칭 정확도·지연·비용 측정. 지금의 가상 라우팅 시험은 실제 성능·비용 절감률의 증거가 아닙니다.</p></div></div>
+    </section>
+    <footer><a class="footer-brand" href="#overview">get-job <span>↗</span></a><p>공고를 모으는 것에서, 근거 있는 지원 준비까지.</p><div><span>코드 기준 · 2026.09.06</span><a href="https://docs.langchain.com/oss/python/langgraph/workflows-agents" target="_blank" rel="noreferrer">워크플로 공식 문서 ↗</a><a href="#overview">맨 위로 ↑</a></div></footer>
+  </main>
+</div>
+<noscript><div class="noscript-note">전체 개념 설명은 읽을 수 있습니다. 단계별 예시와 시뮬레이션을 사용하려면 JavaScript를 켜 주세요.</div></noscript>
+</body>
+</html>
