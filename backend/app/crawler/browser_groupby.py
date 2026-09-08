@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from app.company_facts import groupby_company_facts
 from app.crawler.domain import CollectedJob
 from app.crawler.hiring_process import analyze_hiring_process
+from app.crawler.http import CachedHttpClient, RobotsDeniedError
 from app.crawler.normalization import normalize_text
 from app.crawler.relevance import assess_relevance, extract_tech_stack, is_likely_target_role
 from app.crawler.tracked import prioritize_tracked_urls
@@ -24,6 +25,23 @@ GROUPBY_PUBLIC_ORIGIN = "https://groupby.kr"
 GROUPBY_DEVELOPER_PARENT_POSITION_ID = 17
 LIST_PAGE_SIZE = 10
 MAX_LIST_PAGES = 200
+MAX_PUBLIC_POSITIONS = 50
+GROUPBY_PUBLIC_CATALOG = f"{GROUPBY_PUBLIC_ORIGIN}/jobs/engineering"
+
+
+class GroupbyRestrictedResponseError(RuntimeError):
+    """The public API supplied display-restricted data instead of real postings."""
+
+
+def _reject_restricted_position(position: dict[str, Any]) -> None:
+    startup = position.get("startup")
+    names = [position.get("name")]
+    if isinstance(startup, dict):
+        names.append(startup.get("name"))
+    if any(isinstance(name, str) and "[표시 제한]" in name for name in names):
+        raise GroupbyRestrictedResponseError(
+            "GroupBy API가 표시 제한 응답을 반환했습니다. 제한된 공고는 저장하지 않습니다."
+        )
 
 
 @dataclass
@@ -61,10 +79,20 @@ async def collect_groupby_browser(
         timeout=httpx.Timeout(30.0),
         follow_redirects=False,
     ) as client:
-        discovery = await _discover_groupby_candidates(
-            client,
-            delay_min_seconds=delay_min_seconds,
-        )
+        try:
+            discovery = await _discover_groupby_candidates(
+                client,
+                delay_min_seconds=delay_min_seconds,
+            )
+        except GroupbyRestrictedResponseError:
+            return await collect_groupby_public_pages(
+                max_jobs=max_jobs,
+                delay_min_seconds=delay_min_seconds,
+                user_agent=user_agent,
+                priority_urls=priority_urls,
+                on_progress=on_progress,
+                on_discovery=on_discovery,
+            )
         if on_discovery:
             on_discovery(discovery.complete, discovery.warning)
         candidates = discovery.candidates
@@ -114,6 +142,15 @@ async def collect_groupby_browser(
                     collected.employment_type,
                 ).included:
                     results.append(collected)
+            except GroupbyRestrictedResponseError:
+                return await collect_groupby_public_pages(
+                    max_jobs=max_jobs,
+                    delay_min_seconds=delay_min_seconds,
+                    user_agent=user_agent,
+                    priority_urls=priority_urls,
+                    on_progress=on_progress,
+                    on_discovery=on_discovery,
+                )
             except (httpx.HTTPError, RuntimeError, TypeError, ValueError, KeyError):
                 failed += 1
             if on_progress:
@@ -214,6 +251,10 @@ async def _get_groupby_data(
             data = payload.get("data")
             if not isinstance(data, dict):
                 raise ValueError("missing GroupBy API data")
+            _reject_restricted_position(data)
+            for item in data.get("items", []) if isinstance(data.get("items"), list) else []:
+                if isinstance(item, dict):
+                    _reject_restricted_position(item)
             return data
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             last_error = exc
@@ -222,7 +263,100 @@ async def _get_groupby_data(
     raise RuntimeError("groupby public API request failed") from last_error
 
 
+def _public_page_props(html: str) -> dict[str, Any]:
+    node = BeautifulSoup(html, "html.parser").find("script", id="__NEXT_DATA__")
+    if node is None:
+        raise ValueError("GroupBy 공개 페이지의 구조화 데이터를 찾지 못했습니다.")
+    payload = json.loads(node.get_text())
+    outer_props = payload.get("props") if isinstance(payload, dict) else None
+    props = outer_props.get("pageProps") if isinstance(outer_props, dict) else None
+    if not isinstance(props, dict):
+        raise ValueError("GroupBy 공개 페이지의 데이터 구조가 변경되었습니다.")
+    return props
+
+
+def parse_groupby_public_detail(html: str, position_id: int) -> CollectedJob:
+    payload = _public_page_props(html).get("fallbackDataRaw")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("id")) is not int
+        or payload["id"] != position_id
+    ):
+        raise ValueError("GroupBy 공개 상세 페이지의 공고 ID가 일치하지 않습니다.")
+    return parse_groupby_api_detail(payload)
+
+
+async def collect_groupby_public_pages(
+    *,
+    max_jobs: int,
+    delay_min_seconds: float,
+    user_agent: str,
+    priority_urls: list[str] | None = None,
+    on_progress: ProgressCallback | None = None,
+    on_discovery: DiscoveryCallback | None = None,
+) -> list[CollectedJob]:
+    """Read only openly published HTML, never the restricted API or login pages.
+
+    The category's initial HTML is a subset of the catalog. Never use this path
+    to infer that missing postings closed, even when every visible item was read.
+    """
+    if on_discovery:
+        on_discovery(
+            False,
+            "GroupBy API 표시 제한으로 공개 개발자 페이지에 노출된 공고만 부분 수집했습니다. "
+            "전체 목록을 확인하지 못해 기존 공고의 마감 상태는 유지합니다.",
+        )
+    async with CachedHttpClient(
+        cache_dir=".cache/groupby-public",
+        user_agent=user_agent,
+        delay_min_seconds=delay_min_seconds,
+        delay_max_seconds=delay_min_seconds,
+    ) as client:
+        html = await client.get(
+            GROUPBY_PUBLIC_CATALOG, expected_host="groupby.kr", force_refresh=True
+        )
+        positions = _public_page_props(html).get("positions")
+        if not isinstance(positions, list):
+            raise ValueError("GroupBy 공개 개발자 페이지에 공고 목록이 없습니다.")
+        candidates: dict[str, dict[str, Any]] = {}
+        for position in positions[:MAX_PUBLIC_POSITIONS]:
+            if not isinstance(position, dict):
+                continue
+            _reject_restricted_position(position)
+            position_id = position.get("id")
+            if type(position_id) is int and position_id > 0:
+                candidates[f"{GROUPBY_PUBLIC_ORIGIN}/positions/{position_id}"] = position
+        urls = prioritize_tracked_urls(candidates, priority_urls or [])
+        found = len(urls)
+        failed = 0
+        results: list[CollectedJob] = []
+        if on_progress:
+            on_progress(0, found, failed)
+        for index, url in enumerate(urls):
+            candidate = candidates[url]
+            if is_likely_target_role(str(candidate.get("name") or "")):
+                try:
+                    html = await client.get(url, expected_host="groupby.kr", force_refresh=True)
+                    job = parse_groupby_public_detail(html, candidate["id"])
+                    if assess_relevance(
+                        job.title, job.description_text, job.experience_text, job.employment_type
+                    ).included:
+                        results.append(job)
+                except (GroupbyRestrictedResponseError, RobotsDeniedError):
+                    raise
+                except (httpx.HTTPError, RuntimeError, TypeError, ValueError, KeyError):
+                    failed += 1
+            if on_progress:
+                on_progress(index + 1, found, failed)
+            if len(results) >= max_jobs:
+                break
+    return results
+
+
 def parse_groupby_api_detail(payload: dict[str, Any]) -> CollectedJob:
+    _reject_restricted_position(payload)
     position_id = payload.get("id")
     startup = payload.get("startup")
     if not isinstance(position_id, int) or position_id <= 0 or not isinstance(startup, dict):

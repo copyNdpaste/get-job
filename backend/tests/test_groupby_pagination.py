@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -83,25 +84,60 @@ def detail(position_id):
     }
 
 
-@pytest.mark.parametrize("mode", ["cap", "repeat", "complete", "job_limit"])
-def test_collection_persists_partial_results_without_closing_unseen_jobs(monkeypatch, mode):
+def public_html(props):
+    return (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": props}})
+        + "</script>"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode", ["cap", "repeat", "complete", "job_limit", "restricted_list", "restricted_detail"]
+)
+def test_collection_persists_partial_results_without_closing_unseen_jobs(
+    monkeypatch, tmp_path, mode
+):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(groupby, "LIST_PAGE_SIZE", 2)
     monkeypatch.setattr(groupby, "MAX_LIST_PAGES", 1 if mode == "cap" else 3)
     requested = []
 
     def respond(request):
         requested.append(request.url.path)
+        if request.url.host == "groupby.kr":
+            if request.url.path == "/robots.txt":
+                return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+            if request.url.path == "/jobs/engineering":
+                return httpx.Response(
+                    200, text=public_html({"positions": listing([3, 4])["items"]})
+                )
+            return httpx.Response(
+                200,
+                text=public_html(
+                    {
+                        "fallbackDataRaw": json.dumps(
+                            detail(int(request.url.path.rsplit("/", 1)[-1]))
+                        )
+                    }
+                ),
+            )
         if request.url.path == "/startup-positions":
             data = listing([1, 2], 10 if mode in {"cap", "repeat"} else 2)
+            if mode == "restricted_list":
+                data["total"] = 180000
+                data["items"][0]["name"] = "[표시 제한] Backend Engineer"
         else:
             data = detail(int(request.url.path.rsplit("/", 1)[-1]))
+            if mode == "restricted_detail" and data["id"] == 2:
+                data["startup"]["name"] = "[표시 제한] 테스트 회사"
         return httpx.Response(200, json={"status": 200, "data": data})
 
     client_class = httpx.AsyncClient
     monkeypatch.setattr(
         groupby.httpx,
         "AsyncClient",
-        lambda **kwargs: client_class(transport=httpx.MockTransport(respond), **kwargs),
+        lambda **kwargs: client_class(**{**kwargs, "transport": httpx.MockTransport(respond)}),
     )
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -133,11 +169,111 @@ def test_collection_persists_partial_results_without_closing_unseen_jobs(monkeyp
 
     with sessions() as session:
         run = session.get(CrawlRun, run_id)
-        assert run.status == ("partial" if mode in {"cap", "repeat"} else "succeeded")
-        assert bool(run.error_log) is (mode in {"cap", "repeat"})
+        partial = mode in {"cap", "repeat", "restricted_list", "restricted_detail"}
+        assert run.status == ("partial" if partial else "succeeded")
+        assert bool(run.error_log) is partial
         assert run.jobs_created == (1 if mode == "job_limit" else 2)
         assert session.get(JobPosting, old_job_id).is_active is (mode != "complete")
-        new_job = session.scalar(select(JobPosting).where(JobPosting.external_job_id == "1"))
+        expected_id = "3" if mode.startswith("restricted") else "1"
+        new_job = session.scalar(
+            select(JobPosting).where(JobPosting.external_job_id == expected_id)
+        )
         assert new_job is not None and new_job.is_active
         assert run.finished_at is not None
+        if mode.startswith("restricted"):
+            assert (
+                session.scalar(select(JobPosting).where(JobPosting.external_job_id == "1")) is None
+            )
+            assert "표시 제한" in run.error_log
     assert requested.count("/startup-positions") == (2 if mode == "repeat" else 1)
+    if mode == "restricted_list":
+        assert "/startup-positions/1" not in requested
+    if mode.startswith("restricted"):
+        assert requested.count("/robots.txt") == 1
+        assert "/jobs/engineering" in requested
+
+
+@pytest.mark.parametrize("blocked", [True, False])
+def test_public_fallback_checks_robots_and_rejects_cross_host_redirects(
+    monkeypatch, tmp_path, blocked
+):
+    monkeypatch.chdir(tmp_path)
+    requested = []
+
+    def respond(request):
+        requested.append(str(request.url))
+        if request.url.path == "/startup-positions":
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "data": {
+                        "items": [{"id": 1, "name": "[표시 제한] Backend Engineer"}],
+                        "total": 180000,
+                    },
+                },
+            )
+        if request.url.path == "/robots.txt":
+            return httpx.Response(
+                200, text="User-agent: *\n" + ("Disallow: /\n" if blocked else "Allow: /\n")
+            )
+        return httpx.Response(302, headers={"location": "https://untrusted.example/positions/1"})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        groupby.httpx,
+        "AsyncClient",
+        lambda **kw: original(**{**kw, "transport": httpx.MockTransport(respond)}),
+    )
+    with pytest.raises((ValueError, groupby.RobotsDeniedError)):
+        asyncio.run(groupby.collect_groupby_browser(delay_min_seconds=0))
+    assert not any("untrusted.example" in url for url in requested)
+    assert len(requested) == (2 if blocked else 3)
+
+
+def test_public_detail_rejects_mismatched_and_restricted_postings():
+    with pytest.raises(ValueError, match="ID"):
+        groupby.parse_groupby_public_detail(public_html({"fallbackDataRaw": detail(2)}), 1)
+    restricted = detail(1)
+    restricted["name"] = "[표시 제한] Backend Engineer"
+    with pytest.raises(groupby.GroupbyRestrictedResponseError):
+        groupby.parse_groupby_public_detail(public_html({"fallbackDataRaw": restricted}), 1)
+
+
+@pytest.mark.parametrize("max_jobs", [1, 10])
+def test_public_fallback_bounds_candidate_and_detail_requests(monkeypatch, tmp_path, max_jobs):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(groupby, "MAX_PUBLIC_POSITIONS", 2)
+    requested = []
+    coverage = []
+
+    def respond(request):
+        assert request.url.host == "groupby.kr"
+        requested.append(request.url.path)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        if request.url.path == "/jobs/engineering":
+            return httpx.Response(200, text=public_html({"positions": listing([1, 2, 3])["items"]}))
+        return httpx.Response(
+            200,
+            text=public_html({"fallbackDataRaw": detail(int(request.url.path.rsplit("/", 1)[-1]))}),
+        )
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        groupby.httpx,
+        "AsyncClient",
+        lambda **kw: original(**{**kw, "transport": httpx.MockTransport(respond)}),
+    )
+    jobs = asyncio.run(
+        groupby.collect_groupby_public_pages(
+            max_jobs=max_jobs,
+            delay_min_seconds=0,
+            user_agent="test-collector",
+            on_discovery=lambda complete, warning: coverage.append(complete),
+        )
+    )
+    assert len(jobs) == min(max_jobs, 2)
+    assert len(requested) == 2 + min(max_jobs, 2)
+    assert "/positions/3" not in requested
+    assert coverage == [False]
