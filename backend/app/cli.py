@@ -59,15 +59,21 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             return {"source": args.source, "title": data.title, "status": status}
 
     if args.source == "groupby":
+        discovery: dict[str, object] = {"discovery_complete": False, "warning": None}
+
+        def update_discovery(complete: bool, warning: str | None) -> None:
+            discovery.update(discovery_complete=complete, warning=warning)
+
         jobs = await collect_groupby_browser(
             max_jobs=args.max_jobs,
             headless=args.headless,
             delay_min_seconds=settings.crawler_delay_min_seconds,
             user_agent=settings.crawler_user_agent,
+            on_discovery=update_discovery,
         )
         with SessionLocal.begin() as session:
             counts = persist_collected_jobs(session, "groupby", jobs)
-        return {"source": "groupby", "found": len(jobs), **counts}
+        return {"source": "groupby", "found": len(jobs), **counts, **discovery}
 
     if args.source in {"wanted", "remember"}:
         jobs = await collect_browser_urls(

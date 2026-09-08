@@ -142,6 +142,12 @@ async def _run_collection(
             priority_urls = tracked_posting_urls(session, run.source_id)
             if source_name == "groupby":
                 progress = {"visited": 0, "found": 0, "failed": 0}
+                discovery_complete = False
+
+                def update_groupby_discovery(complete: bool, warning: str | None) -> None:
+                    nonlocal discovery_complete
+                    discovery_complete = complete
+                    run.error_log = warning
 
                 def update_groupby_progress(visited: int, found: int, failed: int) -> None:
                     progress.update(visited=visited, found=found, failed=failed)
@@ -157,13 +163,15 @@ async def _run_collection(
                     user_agent=settings.crawler_user_agent,
                     priority_urls=priority_urls,
                     on_progress=update_groupby_progress,
+                    on_discovery=update_groupby_discovery,
                 )
                 counts = persist_collected_jobs(session, source_name, jobs)
                 run.jobs_created = counts["created"]
                 run.jobs_updated = counts["updated"]
-                run.status = "partial" if run.jobs_failed else "succeeded"
+                run.status = "partial" if run.jobs_failed or not discovery_complete else "succeeded"
                 if (
-                    progress["found"] > 0
+                    discovery_complete
+                    and progress["found"] > 0
                     and progress["visited"] >= progress["found"]
                     and progress["failed"] == 0
                 ):

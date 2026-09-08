@@ -215,7 +215,9 @@ def discover_groupby_api_candidates(context: dict[str, object]) -> None:
                 "Referer": "https://groupby.kr/positions",
             },
         ) as client:
-            return await _discover_groupby_candidates(client, delay_min_seconds=0)
+            discovery = await _discover_groupby_candidates(client, delay_min_seconds=0)
+            assert discovery.complete
+            return discovery.candidates
 
     context["groupby_candidates"] = asyncio.run(discover())
 

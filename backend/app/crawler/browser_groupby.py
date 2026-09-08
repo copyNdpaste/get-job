@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,12 +17,20 @@ from app.crawler.relevance import assess_relevance, extract_tech_stack, is_likel
 from app.crawler.tracked import prioritize_tracked_urls
 
 ProgressCallback = Callable[[int, int, int], None]
+DiscoveryCallback = Callable[[bool, str | None], None]
 
 GROUPBY_API_BASE = "https://api.groupby.kr"
 GROUPBY_PUBLIC_ORIGIN = "https://groupby.kr"
 GROUPBY_DEVELOPER_PARENT_POSITION_ID = 17
 LIST_PAGE_SIZE = 10
 MAX_LIST_PAGES = 200
+
+
+@dataclass
+class GroupbyDiscovery:
+    candidates: list[dict[str, Any]]
+    complete: bool
+    warning: str | None = None
 
 
 async def collect_groupby_browser(
@@ -33,6 +42,7 @@ async def collect_groupby_browser(
     user_agent: str = "get-job/0.1 (+local personal job search)",
     priority_urls: list[str] | None = None,
     on_progress: ProgressCallback | None = None,
+    on_discovery: DiscoveryCallback | None = None,
 ) -> list[CollectedJob]:
     """Collect GroupBy's open developer positions through its public page API.
 
@@ -51,10 +61,13 @@ async def collect_groupby_browser(
         timeout=httpx.Timeout(30.0),
         follow_redirects=False,
     ) as client:
-        candidates = await _discover_groupby_candidates(
+        discovery = await _discover_groupby_candidates(
             client,
             delay_min_seconds=delay_min_seconds,
         )
+        if on_discovery:
+            on_discovery(discovery.complete, discovery.warning)
+        candidates = discovery.candidates
         prioritized_urls = prioritize_tracked_urls(
             (
                 f"{GROUPBY_PUBLIC_ORIGIN}/positions/{candidate.get('id')}"
@@ -116,11 +129,22 @@ async def _discover_groupby_candidates(
     client: httpx.AsyncClient,
     *,
     delay_min_seconds: float,
-) -> list[dict[str, Any]]:
+) -> GroupbyDiscovery:
     candidates: list[dict[str, Any]] = []
     seen: set[int] = set()
     offset = 0
     total: int | None = None
+    invalid_items = False
+
+    def finish() -> GroupbyDiscovery:
+        if invalid_items or (total is not None and len(seen) < total):
+            return GroupbyDiscovery(
+                candidates,
+                False,
+                "GroupBy 목록에 누락되거나 잘못된 항목이 있어 부분 수집했습니다.",
+            )
+        return GroupbyDiscovery(candidates, True)
+
     for _ in range(MAX_LIST_PAGES):
         data = await _get_groupby_data(
             client,
@@ -136,23 +160,40 @@ async def _discover_groupby_candidates(
             raise RuntimeError("groupby public API returned no position list")
         if total is None:
             raw_total = data.get("total")
-            total = raw_total if isinstance(raw_total, int) and raw_total >= 0 else None
-        page_items = [item for item in raw_items if isinstance(item, dict)]
-        for item in page_items:
+            total = raw_total if type(raw_total) is int and raw_total >= 0 else None
+        if not raw_items:
+            return finish()
+        previous_count = len(seen)
+        for item in raw_items:
+            if not isinstance(item, dict):
+                invalid_items = True
+                continue
             position_id = item.get("id")
-            if isinstance(position_id, int) and position_id > 0 and position_id not in seen:
+            if type(position_id) is not int or position_id <= 0:
+                invalid_items = True
+                continue
+            if position_id not in seen:
                 seen.add(position_id)
                 candidates.append(item)
-        if not page_items:
-            break
-        offset += len(page_items)
+        if len(seen) == previous_count:
+            return GroupbyDiscovery(
+                candidates,
+                False,
+                "GroupBy 목록에서 새로운 공고를 찾지 못해 반복 조회를 중단하고 부분 수집했습니다.",
+            )
+        # Offset refers to API rows, including malformed and duplicate entries.
+        offset += len(raw_items)
         if total is not None and offset >= total:
-            break
-        if delay_min_seconds > 0:
+            return finish()
+        if total is None and len(raw_items) < LIST_PAGE_SIZE:
+            return finish()
+        if delay_min_seconds > 0 and _ + 1 < MAX_LIST_PAGES:
             await asyncio.sleep(delay_min_seconds)
-    else:
-        raise RuntimeError("groupby public API pagination exceeded the safety limit")
-    return candidates
+    return GroupbyDiscovery(
+        candidates,
+        False,
+        f"GroupBy 목록 조회 안전 한도({MAX_LIST_PAGES}페이지)에 도달해 부분 수집했습니다.",
+    )
 
 
 async def _get_groupby_data(
