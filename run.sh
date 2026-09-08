@@ -17,7 +17,24 @@ run_with_timeout() {
     return
   fi
   if command -v perl >/dev/null 2>&1; then
-    perl -e 'alarm shift @ARGV; exec @ARGV; exit 127' "$timeout_seconds" "$@"
+    # Keep the watchdog separate: Go clients can ignore an inherited SIGALRM.
+    perl -e '
+      my $seconds = shift @ARGV;
+      my $pid = fork();
+      die "fork failed" unless defined $pid;
+      if (!$pid) { setpgrp(0, 0); exec @ARGV; exit 127; }
+      $SIG{ALRM} = sub {
+        kill "TERM", -$pid;
+        sleep 1;
+        kill "KILL", -$pid;
+        waitpid($pid, 0);
+        exit 124;
+      };
+      alarm $seconds;
+      waitpid($pid, 0);
+      alarm 0;
+      exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+    ' "$timeout_seconds" "$@"
     return
   fi
   echo "제한 시간을 적용할 timeout 또는 perl 명령을 찾지 못했습니다." >&2
@@ -26,18 +43,21 @@ run_with_timeout() {
 
 mode=start
 open_browser=true
-case "${1:-}" in
-  "") ;;
-  --no-open) open_browser=false ;;
-  restart)
-    mode=restart
-    open_browser=false
-    ;;
-  *)
-    echo "사용법: ./run.sh [--no-open|restart]" >&2
-    exit 2
-    ;;
-esac
+repair_docker=false
+for argument in "$@"; do
+  case "$argument" in
+    --no-open) open_browser=false ;;
+    --repair-docker) repair_docker=true ;;
+    restart)
+      mode=restart
+      open_browser=false
+      ;;
+    *)
+      echo "사용법: ./run.sh [restart] [--no-open] [--repair-docker]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 app_url=http://localhost:41739
 open_app() {
@@ -98,19 +118,56 @@ if [ ! -f .env ]; then
   echo "로컬 설정 파일(.env)을 만들었습니다."
 fi
 
-if ! run_with_timeout 10 docker info >/dev/null 2>&1; then
+docker_ready() {
+  if docker_probe=$(run_with_timeout 5 docker version --format '{{.Server.Version}}' 2>&1); then
+    return 0
+  fi
+  case "$docker_probe" in
+    *"permission denied"* | *"operation not permitted"*)
+      echo "Docker 소켓 접근 권한이 없습니다. 터미널 또는 실행 도구의 Docker 접근 권한을 확인해 주세요." >&2
+      exit 1
+      ;;
+  esac
+  return 1
+}
+
+if ! docker_ready; then
+  engine_context=$(run_with_timeout 5 docker context show 2>/dev/null || true)
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    echo "DOCKER_HOST로 지정한 Docker 엔진에 연결할 수 없습니다. 해당 주소와 엔진 상태를 확인해 주세요." >&2
+    exit 1
+  fi
   echo "Docker 엔진을 시작합니다…"
-  if [ -d /Applications/OrbStack.app ]; then
+  if [ "$engine_context" = orbstack ] && command -v orbctl >/dev/null 2>&1; then
+    if [ "$repair_docker" = true ]; then
+      echo "OrbStack Docker 엔진을 재시작합니다. 다른 컨테이너도 잠시 중단될 수 있습니다."
+      if ! run_with_timeout 60 orbctl restart docker; then
+        echo "OrbStack Docker 재시작 요청이 완료되지 않았습니다. 엔진 응답을 확인합니다…" >&2
+      fi
+    elif ! run_with_timeout 30 orbctl start; then
+      echo "OrbStack 시작 요청이 완료되지 않았습니다. 엔진 응답을 확인합니다…" >&2
+    fi
+  elif [ "$engine_context" = default ] && [ -d /Applications/OrbStack.app ]; then
     open -gja OrbStack
-  elif [ -d /Applications/Docker.app ]; then
+  elif { [ "$engine_context" = desktop-linux ] || [ "$engine_context" = default ]; } \
+    && [ -d /Applications/Docker.app ]; then
     open -gja Docker
+  else
+    echo "선택된 Docker context의 엔진에 연결할 수 없습니다. 'docker context ls'로 연결 설정을 확인해 주세요." >&2
+    exit 1
   fi
   attempt=0
-  while ! run_with_timeout 10 docker info >/dev/null 2>&1; do
+  while ! docker_ready; do
     attempt=$((attempt + 1))
-    if [ "$attempt" -ge 12 ]; then
-      echo "Docker 엔진이 준비되지 않았습니다. OrbStack 또는 Docker Desktop 상태를 확인해 주세요." >&2
+    if [ "$attempt" -ge 18 ]; then
+      echo "Docker 엔진이 응답하지 않습니다. 앱이 실행 중이어도 엔진이 멈췄을 수 있습니다." >&2
+      if [ "$engine_context" = orbstack ]; then
+        echo "복구 명령: ./run.sh --repair-docker (같은 엔진의 다른 컨테이너도 잠시 중단됩니다)" >&2
+      fi
       exit 1
+    fi
+    if [ $((attempt % 3)) -eq 0 ]; then
+      echo "Docker 서버 응답을 기다리고 있습니다…"
     fi
     sleep 2
   done

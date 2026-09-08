@@ -44,6 +44,17 @@ cd /path/to/get-job
 ./run.sh restart
 ```
 
+OrbStack 앱이 켜져 있어도 Docker 서버가 응답하지 않으면 아래 명령으로 엔진을 복구할 수 있습니다.
+이 옵션은 응답이 없는 엔진만 재시작하며, 같은 OrbStack에서 실행하는 다른 컨테이너도 잠시
+중단될 수 있습니다. 컨테이너와 데이터 볼륨을 삭제하지 않습니다.
+
+```bash
+./run.sh --repair-docker
+```
+
+`--no-open`과 함께 사용할 수 있습니다. 일반 실행은 `orbctl start`로 엔진을 시작하고,
+계속 응답이 없으면 복구 명령을 안내합니다. Docker 소켓 권한 오류는 엔진 장애와 구분해 표시합니다.
+
 - GUI: <http://localhost:41739>
 - API 문서: <http://localhost:8000/docs>
 - 상태 확인: <http://localhost:8000/health>
