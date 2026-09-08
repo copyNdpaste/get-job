@@ -1,3 +1,7 @@
+from datetime import UTC, datetime
+
+import pytest
+
 from app.ecosystem_monitor import extract_program_candidates
 
 
@@ -52,7 +56,9 @@ def test_extract_program_candidates_keeps_ir_and_event_announcements() -> None:
     </main>
     """
 
-    candidates = extract_program_candidates(html, "https://www.vcs.go.kr/web/portal/bbs/notice/list")
+    candidates = extract_program_candidates(
+        html, "https://www.vcs.go.kr/web/portal/bbs/notice/list"
+    )
 
     assert [item.program_type for item in candidates] == ["demo_day", "program"]
     assert all(item.is_open for item in candidates)
@@ -87,7 +93,14 @@ def test_vcs_collection_ignores_navigation_links() -> None:
     assert [item.title for item in candidates] == ["AI 전환 세미나 개최 안내"]
 
 
-def test_vcs_short_deadline_is_inferred_with_current_year() -> None:
+@pytest.mark.parametrize(("day", "is_open"), [(6, True), (8, False)])
+def test_vcs_short_deadline_is_inferred_with_current_year(monkeypatch, day, is_open) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, day, tzinfo=UTC)
+
+    monkeypatch.setattr("app.ecosystem_monitor.datetime", FixedDatetime)
     html = """
     <li>
       <a href="/web/portal/bbs/notice/2">기업현장 방문행사 참가기업 모집(~9/7 17:00)</a>
@@ -100,7 +113,7 @@ def test_vcs_short_deadline_is_inferred_with_current_year() -> None:
     )[0]
 
     assert candidate.deadline_text == "2026-09-07"
-    assert candidate.is_open is True
+    assert candidate.is_open is is_open
 
 
 def test_monthly_consultation_expires_at_end_of_program_month() -> None:
@@ -121,6 +134,6 @@ def test_extract_program_candidates_excludes_fund_qna_not_for_founders() -> None
     <a href="/web/portal/bbs/notice/1">2026년 LP 성장펀드 출자사업 질의응답 게시</a>
     """
 
-    assert extract_program_candidates(
-        html, "https://www.vcs.go.kr/web/portal/bbs/notice/list"
-    ) == []
+    assert (
+        extract_program_candidates(html, "https://www.vcs.go.kr/web/portal/bbs/notice/list") == []
+    )
