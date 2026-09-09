@@ -1425,6 +1425,7 @@ function CollectionPanel({ latestRuns, pending, importing, onStart, onImport, on
           <div className="source-run-head"><label className="source-check"><input type="checkbox" aria-label={`${sourceLabels[source]} 수집 선택`} checked={selectedSources.includes(source)} disabled={running} onChange={() => toggleSource(source)} /><span>✓</span><b className={`source-pill ${source}`}>{sourceLabels[source]}</b></label><RunStatus run={run} /></div>
           <div className={running && progress == null ? "crawl-progress indeterminate" : "crawl-progress"} role="progressbar" aria-label={`${sourceLabels[source]} 수집 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}><i style={{ width: `${progress ?? 35}%` }} /></div>
           <p>{run ? running ? `페이지 ${run.pages_visited.toLocaleString()} · 발견 ${run.jobs_found ? run.jobs_found.toLocaleString() : "탐색 중"}` : `발견 ${run.jobs_found.toLocaleString()} · 신규 ${run.jobs_created.toLocaleString()} · 갱신 ${run.jobs_updated.toLocaleString()} · 실패 ${run.jobs_failed.toLocaleString()}` : source === "saramin" ? "공식 API 승인 키 설정 후 수집할 수 있습니다." : "아직 실행 이력이 없습니다."}</p>
+          {run && <CrawlRunTiming run={run} />}
           {run?.error && <small className="run-error">{run.error}</small>}
           {run?.finished_at && run.status !== "failed" && <CrawlResultSummary items={resultItems} loading={resultQueries[index].isLoading} />}
           <button disabled={pending || running} onClick={() => onStart([source])}>{running ? "수집·분석 중…" : "이 사이트만 다시 수집"}</button>
@@ -1439,6 +1440,33 @@ function CollectionPanel({ latestRuns, pending, importing, onStart, onImport, on
       </article>
     </div>
   </aside>;
+}
+
+const CRAWL_TIME_FORMAT = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+function CrawlRunTiming({ run }: { run: CrawlRun }) {
+  const timestamp = (value: string) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? <span>시간 기록 없음</span>
+      : <time dateTime={value}>{CRAWL_TIME_FORMAT.format(date)}</time>;
+  };
+  return <section className="crawl-run-timing" aria-label="최근 수집 시작 및 종료 시각">
+    <span>최근 수집 · 한국 시간 (KST)</span>
+    <dl>
+      <div><dt>시작</dt><dd>{timestamp(run.started_at)}</dd></div>
+      <div><dt>종료</dt><dd>{run.finished_at ? timestamp(run.finished_at) : run.status === "running" ? "수집 중…" : "종료 기록 없음"}</dd></div>
+    </dl>
+  </section>;
 }
 
 function crawlProgress(run?: CrawlRun): number | null {
