@@ -149,7 +149,14 @@ def upsert_collected_job(session: Session, source: JobSource, data: CollectedJob
                 job_posting_id=posting.id,
                 content_hash=digest,
                 raw_content=data.description_raw,
-                structured_content=structured,
+                structured_content={
+                    **structured,
+                    "collection_timing": {
+                        "observed_at": data.observed_at.isoformat(),
+                        "persisted_at": now.isoformat(),
+                        "meaning": "detail_parsed_at_not_publication_time",
+                    },
+                },
                 crawled_at=now,
             )
         )

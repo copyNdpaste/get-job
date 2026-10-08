@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from app.company_enrichment import (
     _corp_alias,
     _match_dart_corp,
@@ -118,3 +120,12 @@ def test_dart_company_matching_is_exact_and_rejects_ambiguous_names() -> None:
     assert _corp_alias("(주) 예시회사") == "예시회사"
     assert _match_dart_corp("예시회사", {"예시회사": ["00123456"]}) == "00123456"
     assert _match_dart_corp("예시회사", {"예시회사": ["00123456", "00999999"]}) is None
+
+
+def test_restricted_company_profile_never_replaces_real_company_facts():
+    startup = {"id": 123, "name": "Example", "memberCount": 26}
+    profile = {"id": 123, "name": "[표시 제한] Substitute", "memberCount": 418}
+    with pytest.raises(ValueError, match="display restricted"):
+        groupby_company_facts(startup, startup_profile=profile)
+    with pytest.raises(ValueError, match="display restricted"):
+        groupby_company_facts(profile)

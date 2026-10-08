@@ -249,3 +249,26 @@ def test_daily_recommendation_api_lists_dates_and_public_job_data() -> None:
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
+
+
+def test_established_company_preference_keeps_unknown_size_above_known_tiny() -> None:
+    with Session(_engine()) as session:
+        _seed(session)
+        source = session.scalar(select(JobSource))
+        candidate = session.scalar(select(CandidateProfile))
+        funded = Company(name="Funded", normalized_name="funded",
+                         employee_count=60, investment_stage="Series B")
+        tiny = Company(name="Tiny", normalized_name="tiny",
+                       employee_count=9, investment_stage="Pre-A")
+        session.add_all([funded, tiny])
+        session.flush()
+        funded_job = _add_scored_job(session, source, funded, candidate, 10, 80, 80)
+        tiny_job = _add_scored_job(session, source, tiny, candidate, 11, 99, 99)
+        session.flush()
+        batch = generate_daily_recommendations(
+            session, Settings(ai_enabled=False, daily_recommendation_prefer_established=True,
+                              daily_recommendation_cooldown_days=0), date(2026, 10, 8)
+        )
+        ordered = [item.job_posting_id for item in batch.items]
+        assert ordered[0] == funded_job.id
+        assert ordered[-1] == tiny_job.id

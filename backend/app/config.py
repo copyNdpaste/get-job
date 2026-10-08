@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     ai_analysis_batch_reviews: int = Field(default=2, ge=0, le=10)
     ai_analysis_min_fit: float = Field(default=60, ge=0, le=100)
     ai_analysis_after_crawl: bool = False
+    crawler_respect_robots: bool = True
     crawler_cache_dir: str = ".cache/crawler"
     crawler_delay_min_seconds: float = 2.0
     crawler_delay_max_seconds: float = 5.0
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     daily_digest_timezone: str = "Asia/Seoul"
     daily_scheduler_api_url: str = "http://backend:8000"
     daily_crawl_max_jobs: int = Field(default=5000, ge=1, le=5000)
+    daily_recommendation_prefer_established: bool = False
     daily_recommendation_limit: int = Field(default=10, ge=1, le=20)
     daily_recommendation_min_fit: float = Field(default=70, ge=0, le=100)
     daily_recommendation_min_value: float = Field(default=70, ge=0, le=100)

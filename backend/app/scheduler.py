@@ -77,6 +77,10 @@ async def run_daily_cycle(settings: Settings) -> None:
         base_url=settings.daily_scheduler_api_url,
         timeout=httpx.Timeout(30, read=20 * 60),
     ) as client:
+        # The API recovers orphaned rows here before checking for active collection.
+        # Otherwise an old interrupted batch can return 409 and prevent a fresh crawl.
+        recovery_response = await client.get("/api/crawl/runs", params={"limit": 200})
+        recovery_response.raise_for_status()
         response = await client.post(
             "/api/crawl/all",
             json={"urls": [], "max_jobs": settings.daily_crawl_max_jobs, "headless": True},
@@ -98,7 +102,7 @@ async def run_daily_cycle(settings: Settings) -> None:
         company_response.raise_for_status()
         recommendation_response = await client.post(
             "/api/daily-recommendations/generate",
-            json={"notify_slack": True},
+            json={"notify_slack": settings.slack_notify_enabled},
         )
         recommendation_response.raise_for_status()
 

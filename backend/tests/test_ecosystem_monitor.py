@@ -65,10 +65,12 @@ def test_extract_program_candidates_keeps_ir_and_event_announcements() -> None:
 
 
 def test_extract_program_candidates_does_not_treat_registered_date_as_deadline() -> None:
-    html = """
+    # Keep this independent of the stale-announcement window.
+    registered = datetime.now(UTC).date().isoformat()
+    html = f"""
     <li>
       <a href="/web/portal/bbs/notice/131126">서울시 공동 스케일업 IR 행사 개최</a>
-      <span>등록일자 2026-08-01</span>
+      <span>등록일자 {registered}</span>
     </li>
     """
 

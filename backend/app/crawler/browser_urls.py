@@ -1,11 +1,14 @@
 import asyncio
+import random
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 
+from app.config import get_settings
 from app.crawler.adapters import POLICIES, get_adapter, validate_source_url
 from app.crawler.domain import CollectedJob
+from app.crawler.http import retry_delay
 from app.crawler.relevance import assess_relevance, is_likely_target_role
 from app.crawler.tracked import prioritize_tracked_urls
 
@@ -16,15 +19,33 @@ WANTED_DETAIL_CONCURRENCY = 8
 WANTED_LIST_CONCURRENCY = 8
 
 
+class RequestPacer:
+    """Spread starts across concurrent requests made by one source client."""
+
+    def __init__(self, sleep=asyncio.sleep) -> None:
+        self.lock = asyncio.Lock()
+        self.sleep = sleep
+        self.started = False
+
+    async def wait(self) -> None:
+        async with self.lock:
+            if self.started:
+                await self.sleep(random.uniform(0.5, 1.5))
+            self.started = True
+
+
 async def get_json_with_retry(
     client: httpx.AsyncClient,
     url: str,
     *,
     params: dict[str, object] | None = None,
     attempts: int = 5,
+    pacer: RequestPacer | None = None,
 ) -> dict[str, object]:
     for attempt in range(attempts):
         try:
+            if pacer is not None:
+                await pacer.wait()
             response = await client.get(url, params=params)
             response.raise_for_status()
             payload = response.json()
@@ -37,7 +58,12 @@ async def get_json_with_retry(
                 raise
             if attempt + 1 >= attempts:
                 raise
-            await asyncio.sleep(0.5 * (2**attempt))
+            delay = (
+                retry_delay(exc.response, attempt)
+                if isinstance(exc, httpx.HTTPStatusError)
+                else 0.5 * (2**attempt)
+            )
+            await asyncio.sleep(delay)
     raise RuntimeError("unreachable")
 
 
@@ -66,15 +92,18 @@ async def discover_wanted_urls(
     offset = 0
     page_size = 100
     async with httpx.AsyncClient(
-        headers={"User-Agent": "Mozilla/5.0 (compatible; JobRadar/1.0)"},
+        headers={"User-Agent": get_settings().crawler_user_agent},
         follow_redirects=True,
         timeout=30,
     ) as client:
+
+        pacer = RequestPacer()
 
         async def fetch_page(page_offset: int) -> dict[str, object]:
             return await get_json_with_retry(
                 client,
                 WANTED_JOBS_API,
+                pacer=pacer,
                 params={
                     "country": "kr",
                     "job_sort": "job.latest_order",
@@ -129,15 +158,19 @@ async def collect_wanted_api(
     semaphore = asyncio.Semaphore(WANTED_DETAIL_CONCURRENCY)
 
     async with httpx.AsyncClient(
-        headers={"User-Agent": "Mozilla/5.0 (compatible; JobRadar/1.0)"},
+        headers={"User-Agent": get_settings().crawler_user_agent},
         follow_redirects=True,
         timeout=30,
     ) as client:
 
+        pacer = RequestPacer()
+
         async def fetch(url: str) -> CollectedJob:
             async with semaphore:
                 job_id = url.rstrip("/").rsplit("/", 1)[-1]
-                payload = await get_json_with_retry(client, f"{WANTED_DETAIL_API}/{job_id}/details")
+                payload = await get_json_with_retry(
+                    client, f"{WANTED_DETAIL_API}/{job_id}/details", pacer=pacer
+                )
                 return adapter.parse_api_detail(payload, url)
 
         tasks = [asyncio.create_task(fetch(url)) for url in target_urls]
@@ -198,7 +231,12 @@ async def collect_browser_urls(
             listing_url = POLICIES[source_name].list_urls[0]
             try:
                 await page.goto(listing_url, wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_timeout(1_000)
+                await page.wait_for_function(
+                    r"""() => Array.from(document.querySelectorAll('a[href]')).some(
+                        a => /\/job\/postings?\/\d+/.test(a.getAttribute('href') || '')
+                    )""",
+                    timeout=30_000,
+                )
                 target_urls = get_adapter(source_name).listing_urls(await page.content(), page.url)
                 target_urls = [validate_source_url(source_name, url) for url in target_urls]
             except Exception:

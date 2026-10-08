@@ -1,13 +1,14 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.crawler.tracked import SUBMITTED_APPLICATION_STATUSES
 from app.models import (
     Application,
+    Company,
     DailyRecommendationBatch,
     DailyRecommendationItem,
     JobPosting,
@@ -63,6 +64,22 @@ def generate_daily_recommendations(
             )
         )
 
+    # Company evidence affects ordering only; unknown size is not a tiny company.
+    organization_priority = case(
+        (and_(
+            Company.employee_count >= 30,
+            func.lower(Company.investment_stage).in_(
+                ["series a", "series b", "series c", "series d", "series e", "series f"]
+            ),
+        ), 0),
+        (Company.employee_count >= 30, 1),
+        (Company.employee_count.is_(None), 2),
+        (Company.employee_count >= 20, 3),
+        else_=4,
+    ) if settings.daily_recommendation_prefer_established else (
+        JobScore.application_value_score.desc()
+    )
+
     rows = session.execute(
         select(
             JobPosting.id,
@@ -72,6 +89,7 @@ def generate_daily_recommendations(
             JobScore.evidence_json,
         )
         .join(JobScore, JobScore.job_posting_id == JobPosting.id)
+        .join(Company, Company.id == JobPosting.company_id)
         .outerjoin(Application, Application.job_posting_id == JobPosting.id)
         .where(
             JobPosting.is_primary_posting.is_(True),
@@ -86,6 +104,7 @@ def generate_daily_recommendations(
             JobScore.application_value_score >= settings.daily_recommendation_min_value,
         )
         .order_by(
+            organization_priority,
             JobScore.application_value_score.desc(),
             JobScore.total_fit_score.desc(),
             JobScore.application_probability_score.desc(),

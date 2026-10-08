@@ -102,6 +102,7 @@ async def collect_http(
         async with CachedHttpClient(
             cache_dir=settings.crawler_cache_dir,
             user_agent=settings.crawler_user_agent,
+            respect_robots=settings.crawler_respect_robots,
             delay_min_seconds=settings.crawler_delay_min_seconds,
             delay_max_seconds=settings.crawler_delay_max_seconds,
         ) as client:
@@ -123,7 +124,9 @@ async def collect_http(
             exhausted_catalog = True
             for index, url in enumerate(detail_urls):
                 try:
-                    html = await client.get(url, expected_host=expected_host)
+                    html = await client.get(
+                        url, expected_host=expected_host, force_refresh=True
+                    )
                     summary.pages_visited += 1
                     data = adapter.parse_detail(html, url)
                     decision = assess_relevance(
@@ -159,7 +162,7 @@ async def collect_http(
             deactivate_not_seen_since(session, source_name, run.started_at)
     except Exception as exc:
         run.status = "failed"
-        errors.append(str(exc))
+        errors.append(f"{type(exc).__name__}: {exc}")
         raise
     finally:
         finished = datetime.now(UTC)

@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -42,9 +42,12 @@ class CollectedJob:
     deadline_at: datetime | None = None
     company_facts: CollectedCompanyFacts | None = None
 
+    observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
     def structured_content(self) -> dict[str, Any]:
         content = asdict(self)
         content.pop("description_raw", None)
+        content.pop("observed_at", None)
         content["posted_at"] = self.posted_at.isoformat() if self.posted_at else None
         content["deadline_at"] = self.deadline_at.isoformat() if self.deadline_at else None
         return content

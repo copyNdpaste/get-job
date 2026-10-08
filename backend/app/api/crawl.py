@@ -2,12 +2,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analysis_service import analyze_batch
+from app.collection_timing import timing_report_from_db
 from app.config import Settings, get_settings
 from app.crawler.adapters import validate_source_url
 from app.crawler.approved_api import collect_saramin_api
@@ -31,6 +32,18 @@ from app.models import Company, CrawlRun, JobPosting, JobSource
 from app.scoring import score_jobs
 
 router = APIRouter(prefix="/api/crawl", tags=["crawl"])
+
+
+@router.get("/timing")
+def collection_timing(
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> dict:
+    """First discoveries and scan coverage; no resume data or inferred publication time."""
+    report = timing_report_from_db(session, days=days, timezone=settings.daily_digest_timezone)
+    report["current_schedule"] = settings.daily_digest_times
+    return report
 
 AUTOMATIC_SOURCES = (
     "demoday",
@@ -340,7 +353,7 @@ async def _run_collection(
             if failed_run is not None:
                 failed_run.status = "failed"
                 failed_run.finished_at = datetime.now(UTC)
-                failed_run.error_log = str(exc)[:4000]
+                failed_run.error_log = f"{type(exc).__name__}: {exc}"[:4000]
                 session.commit()
 
 

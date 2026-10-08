@@ -122,7 +122,7 @@ def test_redirect_to_another_host_is_rejected(tmp_path) -> None:
     assert "127.0.0.1" not in requested_hosts
 
 
-def test_force_refresh_uses_stale_cache_when_server_fails(tmp_path) -> None:
+def test_force_refresh_does_not_claim_stale_page_is_live(tmp_path) -> None:
     url = "https://example.com/jobs/1"
     cache_path = tmp_path / f"{hashlib.sha256(url.encode()).hexdigest()}.html"
     cache_path.write_text("stale public job page", encoding="utf-8")
@@ -142,4 +142,49 @@ def test_force_refresh_uses_stale_cache_when_server_fails(tmp_path) -> None:
                 expected_host="example.com",
             )
 
-    assert asyncio.run(exercise()) == "stale public job page"
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(exercise())
+
+
+def test_explicit_robots_opt_out_fetches_public_page(tmp_path) -> None:
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, text="public posting")
+
+    async def exercise():
+        async with CachedHttpClient(
+            cache_dir=tmp_path, user_agent="browser", respect_robots=False,
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            return await client.get("https://example.com/jobs/1", expected_host="example.com")
+
+    assert asyncio.run(exercise()) == "public posting"
+    assert calls == ["/jobs/1"]
+
+
+def test_rate_limit_waits_for_retry_after_then_retries(tmp_path) -> None:
+    calls = 0
+    waits = []
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "12"})
+        return httpx.Response(200, text="public posting")
+
+    async def sleep(seconds):
+        waits.append(seconds)
+
+    async def exercise():
+        async with CachedHttpClient(
+            cache_dir=tmp_path, user_agent="browser", respect_robots=False,
+            transport=httpx.MockTransport(handler), sleep=sleep,
+        ) as client:
+            return await client.get("https://example.com/jobs/1", expected_host="example.com")
+
+    assert asyncio.run(exercise()) == "public posting"
+    assert calls == 2
+    assert waits == [12]

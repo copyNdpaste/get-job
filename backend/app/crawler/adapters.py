@@ -50,7 +50,7 @@ POLICIES = {
         "https://career.rememberapp.co.kr",
         "browser",
         ("https://career.rememberapp.co.kr/job/postings",),
-        r"/job/postings/\d+",
+        r"/job/postings?/\d+",
     ),
     "jumpit": SitePolicy(
         "jumpit",

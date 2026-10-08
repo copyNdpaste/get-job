@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.company_facts import groupby_company_facts
+from app.config import get_settings
 from app.crawler.domain import CollectedJob
 from app.crawler.hiring_process import analyze_hiring_process
 from app.crawler.http import CachedHttpClient, RobotsDeniedError
@@ -310,9 +311,10 @@ async def collect_groupby_public_pages(
         )
     async with CachedHttpClient(
         cache_dir=".cache/groupby-public",
+        respect_robots=get_settings().crawler_respect_robots,
         user_agent=user_agent,
         delay_min_seconds=delay_min_seconds,
-        delay_max_seconds=delay_min_seconds,
+        delay_max_seconds=max(delay_min_seconds, get_settings().crawler_delay_max_seconds),
     ) as client:
         html = await client.get(
             GROUPBY_PUBLIC_CATALOG, expected_host="groupby.kr", force_refresh=True

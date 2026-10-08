@@ -28,6 +28,12 @@ def groupby_company_facts(
     collected_at: datetime | None = None,
 ) -> CollectedCompanyFacts:
     profile = startup_profile or {}
+    # Display-restricted responses contain plausible substitute facts, not real data.
+    # Never attach those figures to the requested company's existing record.
+    for payload in (startup, profile):
+        name = payload.get("name")
+        if isinstance(name, str) and "[표시 제한]" in name:
+            raise ValueError("GroupBy company profile is display restricted")
     startup_id = profile.get("id") or startup.get("id")
     source_url = (
         f"https://groupby.kr/startups/{startup_id}"
