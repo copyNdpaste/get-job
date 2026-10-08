@@ -339,7 +339,7 @@ type DailyRecommendationResponse = {
 };
 
 const sources = [
-  "all", "demoday", "groupby", "wanted", "jumpit", "rallit", "saramin", "rocketpunch",
+  "all", "demoday", "groupby", "wanted", "remember", "jumpit", "rallit", "saramin", "rocketpunch",
   "jobplanet", "greenhouse", "lever", "ashby", "greeting", "ninehire",
 ];
 const automaticSources = [
@@ -351,6 +351,7 @@ const sourceLabels: Record<string, string> = {
   demoday: "데모데이",
   groupby: "그룹바이",
   wanted: "원티드",
+  remember: "리멤버",
   jumpit: "점핏",
   rallit: "랠릿",
   saramin: "사람인",
@@ -440,6 +441,7 @@ function isNewlyCollected(firstSeenAt: string, now = new Date()): boolean {
 type JobFilters = {
   query: string;
   source: string;
+  excludedSources: string[];
   technologies: string[];
   excludedTech: string[];
   experienceTypes: string[];
@@ -459,6 +461,7 @@ type JobView = "all" | "recent" | "favorites" | "applied" | "hidden";
 const DEFAULT_JOB_FILTERS: JobFilters = {
   query: "",
   source: "all",
+  excludedSources: [],
   technologies: [],
   excludedTech: [...DEFAULT_EXCLUDED_TECH],
   experienceTypes: [],
@@ -481,6 +484,7 @@ const INTERVIEW_COUNT_FILTERS = new Set(INTERVIEW_COUNT_OPTIONS.map((option) => 
 function freshDefaultFilters(): JobFilters {
   return {
     ...DEFAULT_JOB_FILTERS,
+    excludedSources: [],
     technologies: [],
     excludedTech: [...DEFAULT_JOB_FILTERS.excludedTech],
     experienceTypes: [],
@@ -549,6 +553,10 @@ function loadSavedFilters(): JobFilters {
     return {
       query: savedText(saved.query, 200),
       source: typeof saved.source === "string" && sources.includes(saved.source) ? saved.source : "all",
+      excludedSources: Array.isArray(saved.excludedSources)
+        ? Array.from(new Set(saved.excludedSources.filter((value): value is string =>
+            typeof value === "string" && value !== "all" && sources.includes(value))))
+        : [],
       technologies: savedTechList(
         saved.technologies,
         legacyTech ? [legacyTech] : [],
@@ -576,8 +584,8 @@ function loadSavedFilters(): JobFilters {
   }
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`);
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, { signal });
   if (!response.ok) throw new Error(`요청 실패 (${response.status})`);
   return response.json() as Promise<T>;
 }
@@ -608,6 +616,12 @@ function App() {
   const [initialFilters] = useState(loadSavedFilters);
   const [query, setQuery] = useState(initialFilters.query);
   const [source, setSource] = useState(initialFilters.source);
+  const [excludedSources, setExcludedSources] = useState<string[]>(initialFilters.excludedSources);
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
+    return () => window.clearTimeout(timer);
+  }, [query]);
   const [technologies, setTechnologies] = useState<string[]>(initialFilters.technologies);
   const [excludedTech, setExcludedTech] = useState<string[]>(initialFilters.excludedTech);
   const [experienceTypes, setExperienceTypes] = useState<string[]>(initialFilters.experienceTypes);
@@ -635,8 +649,9 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const params = new URLSearchParams({ limit: "200", sort });
-  if (query.trim()) params.set("q", query.trim());
+  if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
   if (source !== "all") params.set("source", source);
+  excludedSources.forEach((item) => params.append("exclude_source", item));
   if (postedWithinDays) params.set("posted_within_days", postedWithinDays);
   if (viewMode !== "hidden") {
     technologies.forEach((item) => params.append("tech", item));
@@ -662,8 +677,8 @@ function App() {
   }
 
   const jobs = useQuery({
-    queryKey: ["jobs", viewMode, query, source, technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, sort],
-    queryFn: () => getJson<JobResponse>(`/api/jobs?${params}`),
+    queryKey: ["jobs", viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, sort],
+    queryFn: ({ signal }) => getJson<JobResponse>(`/api/jobs?${params}`, signal),
   });
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => getJson<Stats>("/api/jobs/stats") });
   const dailyDates = useQuery({
@@ -752,6 +767,7 @@ function App() {
       window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
         query,
         source,
+        excludedSources,
         technologies,
         excludedTech,
         experienceTypes,
@@ -769,7 +785,7 @@ function App() {
     } catch {
       setFilterStorageAvailable(false);
     }
-  }, [query, source, technologies, excludedTech, experienceTypes, minYears, maxYears, codingTests, interviewCounts, minFitScore, minValueScore, postedWithinDays, sort, viewMode]);
+  }, [query, source, excludedSources, technologies, excludedTech, experienceTypes, minYears, maxYears, codingTests, interviewCounts, minFitScore, minValueScore, postedWithinDays, sort, viewMode]);
   const startCrawl = useMutation({
     mutationFn: async (sourceNames: string[]) => {
       const attempts = await Promise.all(sourceNames.map(async (sourceName) => {
@@ -1027,6 +1043,7 @@ function App() {
     const defaults = freshDefaultFilters();
     setQuery(defaults.query);
     setSource(defaults.source);
+    setExcludedSources(defaults.excludedSources);
     setTechnologies(defaults.technologies);
     setExcludedTech(defaults.excludedTech);
     setExperienceTypes(defaults.experienceTypes);
@@ -1139,7 +1156,25 @@ function App() {
           </nav>
           <div className={viewMode === "hidden" ? "filters hidden-view-filters" : "filters"}>
             <label className="search-field"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="회사 또는 포지션 검색" /></label>
-            <Select ariaLabel="공고 출처" value={source} onChange={setSource} options={sources.map((value) => ({ value, label: sourceLabels[value] }))} />
+            <Select ariaLabel="공고 출처" value={source} onChange={(value) => {
+              setSource(value);
+              setExcludedSources((current) => current.filter((item) => item !== value));
+            }} options={sources.map((value) => ({ value, label: sourceLabels[value] }))} />
+            <details className="multi-select-field">
+              <summary><span>{excludedSources.length ? `출처 ${excludedSources.length}개 제외` : "출처 제외"}</span><b>⌄</b></summary>
+              <div className="multi-select-menu">
+                <div className="multi-option-list">
+                  {sources.filter((value) => value !== "all").map((value) => <label className="filter-check" key={value}>
+                    <input type="checkbox" checked={excludedSources.includes(value)} onChange={() => {
+                      setExcludedSources((current) => current.includes(value)
+                        ? current.filter((item) => item !== value) : [...current, value]);
+                      if (source === value) setSource("all");
+                    }} /><span>✓</span><b>{sourceLabels[value]}</b>
+                  </label>)}
+                </div>
+                {excludedSources.length > 0 && <button type="button" onClick={() => setExcludedSources([])}>출처 제외 초기화</button>}
+              </div>
+            </details>
             {viewMode !== "hidden" && <TechMultiSelect values={technologies} options={includedTechOptions} onToggle={toggleTechnology} onClear={() => setTechnologies([])} />}
             <Select ariaLabel="게시 기간" value={postedWithinDays} onChange={setPostedWithinDays} options={POSTED_PERIOD_OPTIONS} />
             <Select ariaLabel="정렬 방식" value={sort} onChange={setSort} options={SORT_OPTIONS} />

@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -104,6 +105,32 @@ class JobPosting(TimestampMixin, Base):
     application: Mapped["Application | None"] = relationship(
         back_populates="job_posting", cascade="all, delete-orphan", uselist=False
     )
+
+
+_VISIBLE_ACTIVE = (
+    JobPosting.is_primary_posting.is_(True)
+    & JobPosting.is_active.is_(True)
+    & JobPosting.is_hidden.is_(False)
+)
+for _name, _columns in (
+    (
+        "ix_job_visible_latest",
+        (
+            func.coalesce(JobPosting.posted_at, JobPosting.first_seen_at).desc(),
+            JobPosting.id.desc(),
+        ),
+    ),
+    (
+        "ix_job_visible_source_latest",
+        (
+            JobPosting.source_id,
+            func.coalesce(JobPosting.posted_at, JobPosting.first_seen_at).desc(),
+            JobPosting.id.desc(),
+        ),
+    ),
+    ("ix_job_visible_collected", (JobPosting.first_seen_at.desc(), JobPosting.id.desc())),
+):
+    Index(_name, *_columns, postgresql_where=_VISIBLE_ACTIVE, sqlite_where=_VISIBLE_ACTIVE)
 
 
 class JobPostingSnapshot(Base):

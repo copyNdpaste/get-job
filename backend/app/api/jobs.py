@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.config import Settings, get_settings
 from app.crawler.tracked import SUBMITTED_APPLICATION_STATUSES
@@ -308,16 +308,22 @@ def _duplicate_links(session: Session, rows: list[Any]) -> dict[object, list[Dup
         return {}
     links: dict[object, list[DuplicatePostingLink]] = {}
     postings = session.execute(
-        select(JobPosting, JobSource)
+        select(
+            JobPosting.id,
+            JobPosting.url,
+            JobPosting.is_active,
+            JobPosting.duplicate_group_id,
+            JobSource.name.label("source_name"),
+        )
         .join(JobSource, JobSource.id == JobPosting.source_id)
         .where(JobPosting.duplicate_group_id.in_(group_ids))
         .order_by(JobPosting.is_primary_posting.desc(), JobSource.name.asc())
     ).all()
-    for posting, source in postings:
+    for posting in postings:
         links.setdefault(posting.duplicate_group_id, []).append(
             DuplicatePostingLink(
                 id=posting.id,
-                source=source.name,
+                source=posting.source_name,
                 url=posting.url,
                 is_active=posting.is_active,
             )
@@ -340,6 +346,7 @@ def list_jobs(
     session: Annotated[Session, Depends(get_db)],
     q: str | None = None,
     source: str | None = None,
+    exclude_source: Annotated[list[str] | None, Query()] = None,
     tech: Annotated[list[str] | None, Query()] = None,
     exclude_tech: Annotated[list[str] | None, Query()] = None,
     experience: Annotated[list[str] | None, Query()] = None,
@@ -360,6 +367,11 @@ def list_jobs(
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> JobListResponse:
+    excluded_sources = list(
+        dict.fromkeys(item.strip() for item in (exclude_source or []) if item.strip())
+    )
+    if len(excluded_sources) > 20 or any(len(item) > 50 for item in excluded_sources):
+        raise HTTPException(status_code=400, detail="제외 출처는 20개, 항목당 50자까지 가능합니다.")
     technologies = [item.strip() for item in (tech or []) if item.strip()]
     if len(technologies) > 20 or any(len(item) > 50 for item in technologies):
         raise HTTPException(
@@ -383,7 +395,35 @@ def list_jobs(
     if min_years is not None and max_years is not None and min_years > max_years:
         raise HTTPException(status_code=400, detail="최소 연차는 최대 연차보다 클 수 없습니다.")
 
-    query = _base_query()
+    # List views never need full descriptions, requirements, or scoring rationale.
+    query = _base_query().options(
+        load_only(
+            JobPosting.id,
+            JobPosting.title,
+            JobPosting.url,
+            JobPosting.tech_stack,
+            JobPosting.hiring_process,
+            JobPosting.has_coding_test,
+            JobPosting.interview_count,
+            JobPosting.experience_text,
+            JobPosting.location,
+            JobPosting.posted_at,
+            JobPosting.deadline_at,
+            JobPosting.first_seen_at,
+            JobPosting.last_seen_at,
+            JobPosting.is_active,
+            JobPosting.is_hidden,
+            JobPosting.is_favorite,
+            JobPosting.duplicate_group_id,
+        ),
+        load_only(
+            JobScore.total_fit_score,
+            JobScore.application_value_score,
+            JobScore.application_probability_score,
+            JobScore.grade,
+            JobScore.evidence_json,
+        ),
+    )
     count_query = (
         select(func.count(func.distinct(JobPosting.id)))
         .join(Company, Company.id == JobPosting.company_id)
@@ -428,6 +468,8 @@ def list_jobs(
         )
     if source:
         conditions.append(JobSource.name == source)
+    if excluded_sources:
+        conditions.append(JobSource.name.notin_(excluded_sources))
     if q:
         token = f"%{q.strip()}%"
         conditions.append(or_(JobPosting.title.ilike(token), Company.name.ilike(token)))
@@ -496,11 +538,20 @@ def list_jobs(
         or max_years is not None
     )
     if needs_post_filter:
-        filtered_rows = [
-            row
-            for row in session.execute(ordered_query).all()
+        # Preserve boundary-aware technology and experience parsing semantics while
+        # scanning only small filter columns, not every score JSON and job body.
+        candidates = ordered_query.with_only_columns(
+            JobPosting.id,
+            JobPosting.title,
+            JobPosting.tech_stack,
+            JobPosting.experience_text,
+            JobPosting.employment_type,
+        )
+        matching_ids = [
+            candidate.id
+            for candidate in session.execute(candidates)
             if _matches_post_filters(
-                row,
+                (candidate,),
                 technologies,
                 excluded_technologies,
                 experience_filters,
@@ -508,8 +559,13 @@ def list_jobs(
                 max_years,
             )
         ]
-        total = len(filtered_rows)
-        rows = filtered_rows[offset : offset + limit]
+        total = len(matching_ids)
+        page_ids = matching_ids[offset : offset + limit]
+        rows = (
+            session.execute(ordered_query.where(JobPosting.id.in_(page_ids)).limit(limit)).all()
+            if page_ids
+            else []
+        )
     else:
         rows = session.execute(ordered_query.limit(limit).offset(offset)).all()
         total = session.scalar(count_query) or 0

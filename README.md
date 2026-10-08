@@ -518,3 +518,9 @@ Backend API에는 `GET /api/ai/status`, `POST /api/ai/jobs/{job_id}/evidence`,
 개인 수집의 robots 검사 여부는 `CRAWLER_RESPECT_ROBOTS`로 명시적으로 선택합니다(기본 true). 사용자 요청으로 이 컴퓨터의 로컬 설정은 false이며 공개 페이지에만 사용합니다. HTML 요청은 2~6초 간격, 원티드 API 요청 시작은 0.5~1.5초 간격으로 분산합니다. 429/503 응답은 Retry-After를 기다린 뒤 제한된 횟수만 재시도합니다. robots 검사 설정과 무관하게 허용 호스트와 리다이렉트 검증은 유지합니다.
 
 `DAILY_RECOMMENDATION_PREFER_ESTABLISHED=true`인 로컬 추천에서는 직원 30명 이상·Series A 이후 확인 회사를 먼저 정렬하고, 규모 미확인을 직원 한 자릿수 회사와 구분합니다. 기본 저장소 설정에서는 기존 점수 순서를 유지합니다.
+
+공고 목록의 기술·경력 필터는 제목·기술·경력 등 작은 컬럼만 먼저 읽고 페이지의 공고에 대해서만 목록 데이터를 로드합니다. 본문과 점수 설명 JSON을 모든 후보에 대해 역직렬화하지 않습니다. 기존 기술 경계 매칭과 연차 범위 겹침 규칙은 유지합니다. 기술·경력 필터는 경량 후보를 Python에서 판별하므로 후보 수에 비례하는 비용은 남습니다.
+
+소스 제외는 `exclude_source=jobplanet&exclude_source=wanted`처럼 여러 값을 지정합니다. 포함 출처와 함께 지정할 때 제외가 우선하며 화면에서는 동일 출처를 포함/제외로 중복 선택하지 않게 합니다. 제외 선택은 다른 필터와 함께 브라우저에 저장되고 필터 초기화로 해제됩니다.
+
+응답 시간은 `python scripts/benchmark_job_filters.py --samples 5 --output data/filter-performance.local/results.json`으로 같은 데이터에서 반복 측정할 수 있습니다. 결과에는 시간과 건수만 저장합니다. `test_job_filter_performance.py`는 3,000개 합성 공고에서 상세 로딩 개수, 제외 필터와 페이지 결과, 이전 전체 상세 스캔 대비 중앙값 개선과 조회 시간 예산을 검증합니다. 실제 PostgreSQL용 활성·노출 공고 정렬 인덱스는 `20261009_0013` 마이그레이션에 포함됩니다.
