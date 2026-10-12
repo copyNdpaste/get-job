@@ -131,7 +131,7 @@ def upsert_collected_job(session: Session, source: JobSource, data: CollectedJob
             posting.experience_text = data.experience_text
             posting.location = data.location
             posting.employment_type = data.employment_type
-            posting.posted_at = data.posted_at
+            posting.posted_at = data.posted_at or posting.posted_at
             posting.deadline_at = data.deadline_at
             posting.content_hash = digest
             posting.last_changed_at = now

@@ -429,11 +429,24 @@ def test_wanted_collection_uses_screen_detail_api_and_keeps_all_skill_tags(
         requested_urls.append(url)
         return payload
 
+    async def fake_public_html(_self, url, **_kwargs):
+        return (
+            '<script type="application/ld+json">'
+            '{"@type":"JobPosting","datePosted":"2026-10-01",'
+            '"validThrough":"2024-01-01","url":"'
+            + url
+            + '"}</script>'
+        )
+
+    monkeypatch.setattr("app.crawler.browser_urls.CachedHttpClient.get", fake_public_html)
     monkeypatch.setattr("app.crawler.browser_urls.get_json_with_retry", fake_get_json)
     jobs = asyncio.run(collect_wanted_api(["https://www.wanted.co.kr/wd/363967"]))
 
     assert requested_urls == [f"{WANTED_DETAIL_API}/363967/details"]
     assert len(jobs) == 1
+    assert jobs[0].posted_at is not None
+    assert jobs[0].posted_at.isoformat() == "2026-09-30T15:00:00+00:00"
+    assert jobs[0].deadline_at is None
     assert {"MySQL", "Redis", "Java", "AWS", "JPA", "Spring Boot", "Python"}.issubset(
         jobs[0].tech_stack
     )

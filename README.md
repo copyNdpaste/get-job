@@ -515,7 +515,7 @@ Backend API에는 `GET /api/ai/status`, `POST /api/ai/jobs/{job_id}/evidence`,
   아직 포함되지 않습니다.
 - 최초 공개 전에 저장소 소유자가 MIT 또는 Apache-2.0 등의 LICENSE를 선택해야 합니다.
 
-개인 수집의 robots 검사 여부는 `CRAWLER_RESPECT_ROBOTS`로 명시적으로 선택합니다(기본 true). 사용자 요청으로 이 컴퓨터의 로컬 설정은 false이며 공개 페이지에만 사용합니다. HTML 요청은 2~6초 간격, 원티드 API 요청 시작은 0.5~1.5초 간격으로 분산합니다. 429/503 응답은 Retry-After를 기다린 뒤 제한된 횟수만 재시도합니다. robots 검사 설정과 무관하게 허용 호스트와 리다이렉트 검증은 유지합니다.
+개인 수집의 robots 검사 여부는 `CRAWLER_RESPECT_ROBOTS`로 명시적으로 선택합니다(기본 true). 사용자 요청으로 이 컴퓨터의 로컬 설정은 false이며 공개 페이지에만 사용합니다. 일반 HTML 요청은 2~6초 간격, 원티드 API와 게시일 페이지 요청 시작은 같은 0.5~1.5초 간격 제어로 분산합니다. 429/503 응답은 Retry-After를 기다린 뒤 제한된 횟수만 재시도합니다. robots 검사 설정과 무관하게 허용 호스트와 리다이렉트 검증은 유지합니다.
 
 `DAILY_RECOMMENDATION_PREFER_ESTABLISHED=true`인 로컬 추천에서는 직원 30명 이상·Series A 이후 확인 회사를 먼저 정렬하고, 규모 미확인을 직원 한 자릿수 회사와 구분합니다. 기본 저장소 설정에서는 기존 점수 순서를 유지합니다.
 
@@ -526,3 +526,9 @@ Backend API에는 `GET /api/ai/status`, `POST /api/ai/jobs/{job_id}/evidence`,
 응답 시간은 `python scripts/benchmark_job_filters.py --samples 5 --output data/filter-performance.local/results.json`으로 같은 데이터에서 반복 측정할 수 있습니다. 결과에는 시간과 건수만 저장합니다. `test_job_filter_performance.py`는 3,000개 합성 공고에서 상세 로딩 개수, 제외 필터와 페이지 결과, 이전 전체 상세 스캔 대비 중앙값 개선과 조회 시간 예산을 검증합니다. 실제 PostgreSQL용 활성·노출 공고 정렬 인덱스는 `20261009_0013` 마이그레이션에 포함됩니다.
 
 게시 기간 필터는 실제 게시일이 확인된 공고만 기본 포함합니다. `include_unknown_posted=true`를 함께 지정하면 게시일 미확인 공고도 포함하되, 확인된 오래된 공고는 제외합니다. 수집일을 게시일로 대체하지 않습니다. 화면의 “게시일 미확인 공고 포함” 선택은 브라우저에 저장되며 초기화할 수 있습니다.
+
+점핏은 해당 공고 ID의 Next.js 데이터에서 `publishedAt`(게시일), `closedAt`(마감일)을 읽습니다. 잡플래닛은 공고 레코드의 `created_at`(등록일), `end_at`(마감일)을 보존합니다. 모집 시작일과 수정일을 새 게시일로 대신 사용하지 않습니다. 시간대가 없는 한국 소스 날짜는 Asia/Seoul 기준으로 해석하고, 날짜만 있는 마감일은 그날 종료 시각까지 유효합니다.
+
+원티드 상세 API에 없는 게시일은 공개 공고 페이지의 JobPosting JSON-LD `datePosted`에서 수집합니다. API와 HTML 요청은 같은 요청 간격 제어를 공유하고, 게시일 페이지 캐시는 7일 동안 재사용합니다. 일시적으로 날짜를 못 읽어도 기존에 확인한 게시일을 지우지 않습니다.
+
+원티드 JSON-LD의 `validThrough`는 게시일과 모순되는 사례가 있어 마감 상태를 덮어쓰는 데 사용하지 않습니다. 원티드 마감일은 기존 상세 API의 `due_time`을 유지합니다.

@@ -88,6 +88,8 @@ class JobPlanetApiClient:
                 "job_url": build_jobplanet_job_url(job_id),
             }
             for field in (
+                "posted_at",
+                "deadline_at",
                 "description_text",
                 "tech_stack",
                 "occupation_names",

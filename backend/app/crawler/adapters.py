@@ -12,6 +12,7 @@ from app.crawler.hiring_process import analyze_hiring_process, process_items_fro
 from app.crawler.job_profile import JOB_SEARCH_TERMS
 from app.crawler.normalization import normalize_text, stable_external_id
 from app.crawler.relevance import extract_tech_stack
+from app.crawler.source_dates import jumpit_position, korean_source_datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,6 +293,10 @@ class SiteAdapter:
             or rallit_position.get("startedAt")
         )
         deadline = self._deadline(ld)
+        if self.policy.source_name == "jumpit":
+            position = jumpit_position(soup, url)
+            posted_at = korean_source_datetime(position.get("publishedAt")) or posted_at
+            deadline = korean_source_datetime(position.get("closedAt"), end_of_day=True) or deadline
         detected_stack = extract_tech_stack(
             "\n".join([title, description_text, *sum(sections.values(), [])])
         )

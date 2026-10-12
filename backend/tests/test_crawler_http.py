@@ -71,9 +71,7 @@ def test_force_refresh_bypasses_a_fresh_cached_page(tmp_path) -> None:
             transport=httpx.MockTransport(handler),
         ) as client:
             first = await client.get("https://example.com/sitemap.xml")
-            refreshed = await client.get(
-                "https://example.com/sitemap.xml", force_refresh=True
-            )
+            refreshed = await client.get("https://example.com/sitemap.xml", force_refresh=True)
             return first, refreshed
 
     assert asyncio.run(exercise()) == ("version 1", "version 2")
@@ -113,9 +111,7 @@ def test_redirect_to_another_host_is_rejected(tmp_path) -> None:
             user_agent="test-agent",
             transport=httpx.MockTransport(handler),
         ) as client:
-            await client.get(
-                "https://example.com/jobs/1", expected_host="example.com"
-            )
+            await client.get("https://example.com/jobs/1", expected_host="example.com")
 
     with pytest.raises(ValueError, match="redirected outside allowed host"):
         asyncio.run(exercise())
@@ -155,7 +151,9 @@ def test_explicit_robots_opt_out_fetches_public_page(tmp_path) -> None:
 
     async def exercise():
         async with CachedHttpClient(
-            cache_dir=tmp_path, user_agent="browser", respect_robots=False,
+            cache_dir=tmp_path,
+            user_agent="browser",
+            respect_robots=False,
             transport=httpx.MockTransport(handler),
         ) as client:
             return await client.get("https://example.com/jobs/1", expected_host="example.com")
@@ -180,11 +178,39 @@ def test_rate_limit_waits_for_retry_after_then_retries(tmp_path) -> None:
 
     async def exercise():
         async with CachedHttpClient(
-            cache_dir=tmp_path, user_agent="browser", respect_robots=False,
-            transport=httpx.MockTransport(handler), sleep=sleep,
+            cache_dir=tmp_path,
+            user_agent="browser",
+            respect_robots=False,
+            transport=httpx.MockTransport(handler),
+            sleep=sleep,
         ) as client:
             return await client.get("https://example.com/jobs/1", expected_host="example.com")
 
     assert asyncio.run(exercise()) == "public posting"
     assert calls == 2
     assert waits == [12]
+
+
+def test_shared_pacing_callback_runs_only_for_network_requests(tmp_path):
+    calls = []
+
+    async def pace():
+        calls.append("paced")
+
+    async def exercise():
+        async with CachedHttpClient(
+            cache_dir=tmp_path,
+            user_agent="test",
+            respect_robots=False,
+            delay_min_seconds=0,
+            delay_max_seconds=0,
+            before_request=pace,
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, text="public")),
+        ) as client:
+            await client.get("https://example.com/job/1")
+            await client.get("https://example.com/job/1")
+            assert calls == ["paced"]
+            await client.get("https://example.com/job/1", force_refresh=True)
+
+    asyncio.run(exercise())
+    assert calls == ["paced", "paced"]

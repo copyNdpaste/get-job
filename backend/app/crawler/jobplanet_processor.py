@@ -46,6 +46,11 @@ class JobPlanetProcessor:
                 "location": location,
                 "job_url": build_jobplanet_job_url(job_id),
             }
+            # The record registration time is kept; modification time must not
+            # make a long-lived posting look newly registered.
+            for original, normalized in (("created_at", "posted_at"), ("end_at", "deadline_at")):
+                if original in posting:
+                    row[normalized] = posting[original]
             if self._has_analysis_metadata(posting):
                 source_skills = self._string_list(posting.get("skills"))
                 occupations = self._occupation_names(posting.get("occupation_names"))

@@ -25,11 +25,13 @@ class CachedHttpClient:
         sleep=asyncio.sleep,
         cache_ttl_seconds: int = 21_600,
         respect_robots: bool = True,
+        before_request=None,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.user_agent = user_agent
         self.respect_robots = respect_robots
+        self.before_request = before_request
         self._request_lock = asyncio.Lock()
         self.delay_min_seconds = delay_min_seconds
         self.delay_max_seconds = delay_max_seconds
@@ -74,6 +76,8 @@ class CachedHttpClient:
                 await self.sleep(random.uniform(self.delay_min_seconds, self.delay_max_seconds))
             try:
                 for attempt in range(3):
+                    if self.before_request is not None:
+                        await self.before_request()
                     response = await self._get_with_safe_redirects(url, expected_host)
                     self._has_requested = True
                     if response.status_code not in {429, 503} or attempt == 2:

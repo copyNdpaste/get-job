@@ -13,6 +13,7 @@ from app.crawler.domain import CollectedJob
 from app.crawler.jobplanet_processor import JobPlanetProcessor
 from app.crawler.normalization import normalize_name, normalize_text
 from app.crawler.relevance import assess_relevance, extract_tech_stack
+from app.crawler.source_dates import korean_source_datetime
 
 MAX_ENDPOINT_URL_LENGTH = 2_048
 MAX_QUERY_LENGTH = 8_192
@@ -311,6 +312,8 @@ def _to_collected_job(row: dict) -> CollectedJob:
     employment_type = normalize_text(str(row.get("employment_type") or "")) or None
     return CollectedJob(
         source_name="jobplanet",
+        posted_at=korean_source_datetime(row.get("posted_at")),
+        deadline_at=korean_source_datetime(row.get("deadline_at"), end_of_day=True),
         external_job_id=external_id,
         company_name=company_name,
         title=title,

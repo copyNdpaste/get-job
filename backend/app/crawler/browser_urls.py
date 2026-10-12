@@ -4,12 +4,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.config import get_settings
 from app.crawler.adapters import POLICIES, get_adapter, validate_source_url
 from app.crawler.domain import CollectedJob
-from app.crawler.http import retry_delay
+from app.crawler.http import CachedHttpClient, retry_delay
 from app.crawler.relevance import assess_relevance, is_likely_target_role
+from app.crawler.source_dates import jobposting_dates
 from app.crawler.tracked import prioritize_tracked_urls
 
 ProgressCallback = Callable[[int, int, int], None]
@@ -96,7 +98,6 @@ async def discover_wanted_urls(
         follow_redirects=True,
         timeout=30,
     ) as client:
-
         pacer = RequestPacer()
 
         async def fetch_page(page_offset: int) -> dict[str, object]:
@@ -162,8 +163,17 @@ async def collect_wanted_api(
         follow_redirects=True,
         timeout=30,
     ) as client:
-
         pacer = RequestPacer()
+        settings = get_settings()
+        pages = CachedHttpClient(
+            cache_dir=".cache/wanted-dates",
+            user_agent=settings.crawler_user_agent,
+            respect_robots=settings.crawler_respect_robots,
+            delay_min_seconds=0,
+            delay_max_seconds=0,
+            cache_ttl_seconds=7 * 24 * 3600,
+            before_request=pacer.wait,
+        )
 
         async def fetch(url: str) -> CollectedJob:
             async with semaphore:
@@ -171,27 +181,43 @@ async def collect_wanted_api(
                 payload = await get_json_with_retry(
                     client, f"{WANTED_DETAIL_API}/{job_id}/details", pacer=pacer
                 )
-                return adapter.parse_api_detail(payload, url)
+                job = adapter.parse_api_detail(payload, url)
+                try:
+                    html = await pages.get(url, expected_host="www.wanted.co.kr")
+                    posted, _ = jobposting_dates(BeautifulSoup(html, "html.parser"), url)
+                    job.posted_at = posted
+                    # Keep the current API deadline: JSON-LD expiry can contradict publication.
+                except (httpx.HTTPError, RuntimeError, ValueError):
+                    # API detail remains usable; lack of a date is not a guessed timestamp.
+                    pass
+                return job
 
         tasks = [asyncio.create_task(fetch(url)) for url in target_urls]
         results: list[CollectedJob] = []
         failed = 0
         completed = 0
-        for task in asyncio.as_completed(tasks):
-            try:
-                job = await task
-                if assess_relevance(
-                    job.title,
-                    job.description_text,
-                    job.experience_text,
-                    job.employment_type,
-                ).included:
-                    results.append(job)
-            except Exception:
-                failed += 1
-            completed += 1
-            if on_progress:
-                on_progress(completed, len(target_urls), failed)
+        try:
+            for task in asyncio.as_completed(tasks):
+                try:
+                    job = await task
+                    if assess_relevance(
+                        job.title,
+                        job.description_text,
+                        job.experience_text,
+                        job.employment_type,
+                    ).included:
+                        results.append(job)
+                except Exception:
+                    failed += 1
+                completed += 1
+                if on_progress:
+                    on_progress(completed, len(target_urls), failed)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await pages.client.aclose()
         return results
 
 
