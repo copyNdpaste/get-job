@@ -452,6 +452,7 @@ type JobFilters = {
   minFitScore: string;
   minValueScore: string;
   postedWithinDays: string;
+  includeUnknownPosted: boolean;
   sort: string;
   viewMode: JobView;
 };
@@ -472,6 +473,7 @@ const DEFAULT_JOB_FILTERS: JobFilters = {
   minFitScore: "",
   minValueScore: "",
   postedWithinDays: "",
+  includeUnknownPosted: false,
   sort: "latest",
   viewMode: "all",
 };
@@ -571,6 +573,7 @@ function loadSavedFilters(): JobFilters {
       interviewCounts,
       minFitScore: savedScore(saved.minFitScore),
       minValueScore: savedScore(saved.minValueScore),
+      includeUnknownPosted: saved.includeUnknownPosted === true,
       postedWithinDays: typeof saved.postedWithinDays === "string" && POSTED_PERIOD_VALUES.has(saved.postedWithinDays)
         ? saved.postedWithinDays
         : "",
@@ -632,6 +635,7 @@ function App() {
   const [minFitScore, setMinFitScore] = useState(initialFilters.minFitScore);
   const [minValueScore, setMinValueScore] = useState(initialFilters.minValueScore);
   const [postedWithinDays, setPostedWithinDays] = useState(initialFilters.postedWithinDays);
+  const [includeUnknownPosted, setIncludeUnknownPosted] = useState(initialFilters.includeUnknownPosted);
   const [sort, setSort] = useState(initialFilters.sort);
   const [viewMode, setViewMode] = useState<JobView>(initialFilters.viewMode);
   const [filterStorageAvailable, setFilterStorageAvailable] = useState(true);
@@ -652,7 +656,10 @@ function App() {
   if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
   if (source !== "all") params.set("source", source);
   excludedSources.forEach((item) => params.append("exclude_source", item));
-  if (postedWithinDays) params.set("posted_within_days", postedWithinDays);
+  if (postedWithinDays) {
+    params.set("posted_within_days", postedWithinDays);
+    if (includeUnknownPosted) params.set("include_unknown_posted", "true");
+  }
   if (viewMode !== "hidden") {
     technologies.forEach((item) => params.append("tech", item));
     excludedTech.forEach((item) => params.append("exclude_tech", item));
@@ -677,7 +684,7 @@ function App() {
   }
 
   const jobs = useQuery({
-    queryKey: ["jobs", viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, sort],
+    queryKey: ["jobs", viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, includeUnknownPosted, sort],
     queryFn: ({ signal }) => getJson<JobResponse>(`/api/jobs?${params}`, signal),
   });
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => getJson<Stats>("/api/jobs/stats") });
@@ -778,6 +785,7 @@ function App() {
         minFitScore,
         minValueScore,
         postedWithinDays,
+        includeUnknownPosted,
         sort,
         viewMode,
       } satisfies JobFilters));
@@ -785,7 +793,7 @@ function App() {
     } catch {
       setFilterStorageAvailable(false);
     }
-  }, [query, source, excludedSources, technologies, excludedTech, experienceTypes, minYears, maxYears, codingTests, interviewCounts, minFitScore, minValueScore, postedWithinDays, sort, viewMode]);
+  }, [query, source, excludedSources, technologies, excludedTech, experienceTypes, minYears, maxYears, codingTests, interviewCounts, minFitScore, minValueScore, postedWithinDays, includeUnknownPosted, sort, viewMode]);
   const startCrawl = useMutation({
     mutationFn: async (sourceNames: string[]) => {
       const attempts = await Promise.all(sourceNames.map(async (sourceName) => {
@@ -1054,6 +1062,7 @@ function App() {
     setMinFitScore(defaults.minFitScore);
     setMinValueScore(defaults.minValueScore);
     setPostedWithinDays(defaults.postedWithinDays);
+    setIncludeUnknownPosted(defaults.includeUnknownPosted);
     setSort(defaults.sort);
     setSelected([]);
     setNotice("필터를 기본값으로 초기화했습니다.");
@@ -1178,6 +1187,12 @@ function App() {
             {viewMode !== "hidden" && <TechMultiSelect values={technologies} options={includedTechOptions} onToggle={toggleTechnology} onClear={() => setTechnologies([])} />}
             <Select ariaLabel="게시 기간" value={postedWithinDays} onChange={setPostedWithinDays} options={POSTED_PERIOD_OPTIONS} />
             <Select ariaLabel="정렬 방식" value={sort} onChange={setSort} options={SORT_OPTIONS} />
+            {postedWithinDays && <div className="filter-block posting-date-filter">
+              <label className="filter-check"><input type="checkbox" checked={includeUnknownPosted} onChange={(event) => setIncludeUnknownPosted(event.target.checked)} /><span>✓</span><b>게시일 미확인 공고 포함</b></label>
+              <p>{includeUnknownPosted
+                ? "선택 기간에 게시된 공고와 게시일 미확인 공고를 표시합니다. 미확인 공고의 최근 게시 여부는 알 수 없습니다."
+                : "게시일이 확인된 공고만 표시합니다. 게시일 미확인 공고는 제외되므로 결과가 적을 수 있습니다."}</p>
+            </div>}
             {viewMode !== "hidden" && <div className="filter-advanced">
               <div className="filter-block">
                 <div className="filter-label"><strong>경력 유형</strong><span>복수 선택 가능</span></div>

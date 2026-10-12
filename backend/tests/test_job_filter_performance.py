@@ -179,3 +179,25 @@ def test_filter_latency_improves_against_full_detail_scan(filter_engine):
     old_median, new_median = statistics.median(old_times), statistics.median(new_times)
     assert new_median < old_median * 0.65, (old_times, new_times)
     assert new_median < 1.0, new_times
+
+
+def test_posted_period_unknown_opt_in_never_uses_collection_date(filter_engine):
+    from datetime import timedelta
+
+    with Session(filter_engine) as session:
+        now = datetime.now(UTC)
+        old = session.get(JobPosting, 1)
+        recent = session.get(JobPosting, 2)
+        old.posted_at = now - timedelta(days=60)
+        recent.posted_at = now - timedelta(days=2)
+        # All records were collected today. That must not make old/unknown dates recent.
+        session.flush()
+        strict = list_jobs(session=session, posted_within_days=30, tech=["Python"], limit=5)
+        assert strict.total == 1
+        assert strict.items[0].id == 2
+        inclusive = list_jobs(session=session, posted_within_days=30,
+                             include_unknown_posted=True, tech=["Python"], limit=5)
+        assert inclusive.total == 2999
+        assert all(item.id != 1 for item in inclusive.items)
+        empty_period = list_jobs(session=session, include_unknown_posted=True, limit=5)
+        assert empty_period.total == 3000

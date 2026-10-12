@@ -363,6 +363,7 @@ def list_jobs(
     hidden_only: bool = False,
     collected_within_days: Annotated[int | None, Query(ge=1, le=90)] = None,
     posted_within_days: Annotated[int | None, Query(ge=1, le=365)] = None,
+    include_unknown_posted: bool = False,
     sort: Literal["latest", "collected", "fit", "value", "company"] = "latest",
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -463,9 +464,12 @@ def list_jobs(
             JobPosting.first_seen_at >= datetime.now(UTC) - timedelta(days=collected_within_days)
         )
     if posted_within_days is not None:
-        conditions.append(
+        posted_condition = (
             JobPosting.posted_at >= datetime.now(UTC) - timedelta(days=posted_within_days)
         )
+        if include_unknown_posted:
+            posted_condition = or_(posted_condition, JobPosting.posted_at.is_(None))
+        conditions.append(posted_condition)
     if source:
         conditions.append(JobSource.name == source)
     if excluded_sources:

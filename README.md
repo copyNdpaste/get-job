@@ -524,3 +524,5 @@ Backend API에는 `GET /api/ai/status`, `POST /api/ai/jobs/{job_id}/evidence`,
 소스 제외는 `exclude_source=jobplanet&exclude_source=wanted`처럼 여러 값을 지정합니다. 포함 출처와 함께 지정할 때 제외가 우선하며 화면에서는 동일 출처를 포함/제외로 중복 선택하지 않게 합니다. 제외 선택은 다른 필터와 함께 브라우저에 저장되고 필터 초기화로 해제됩니다.
 
 응답 시간은 `python scripts/benchmark_job_filters.py --samples 5 --output data/filter-performance.local/results.json`으로 같은 데이터에서 반복 측정할 수 있습니다. 결과에는 시간과 건수만 저장합니다. `test_job_filter_performance.py`는 3,000개 합성 공고에서 상세 로딩 개수, 제외 필터와 페이지 결과, 이전 전체 상세 스캔 대비 중앙값 개선과 조회 시간 예산을 검증합니다. 실제 PostgreSQL용 활성·노출 공고 정렬 인덱스는 `20261009_0013` 마이그레이션에 포함됩니다.
+
+게시 기간 필터는 실제 게시일이 확인된 공고만 기본 포함합니다. `include_unknown_posted=true`를 함께 지정하면 게시일 미확인 공고도 포함하되, 확인된 오래된 공고는 제외합니다. 수집일을 게시일로 대체하지 않습니다. 화면의 “게시일 미확인 공고 포함” 선택은 브라우저에 저장되며 초기화할 수 있습니다.
