@@ -1,9 +1,11 @@
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.jobs import JobListItem, _base_query, _list_item
@@ -206,11 +208,15 @@ async def recommend_jobs(
         except (AIUnavailableError, ValidationError) as exc:
             ai_notice = str(exc)
 
+    year = (datetime.now(UTC) + timedelta(hours=9)).year
+    year_start = datetime(year, 1, 1, tzinfo=UTC) - timedelta(hours=9)
     ranked: list[tuple[tuple[float, float, float, float, float, int], RecommendationItem]] = []
     rows = session.execute(
         _base_query().where(
             JobPosting.is_primary_posting.is_(True),
             JobPosting.is_active.is_(True),
+            or_(JobPosting.posted_at.is_(None), JobPosting.posted_at >= year_start),
+            or_(JobPosting.deadline_at.is_(None), JobPosting.deadline_at >= datetime.now(UTC)),
             JobPosting.is_hidden.is_(False),
             JobScore.total_fit_score.is_not(None),
         )

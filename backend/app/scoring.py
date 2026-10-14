@@ -876,7 +876,15 @@ def score_jobs(
             job, decision.reasons
         )
         if source_verified_development_role:
-            job.is_active = job.deadline_at is None or job.deadline_at >= datetime.now(UTC)
+            check = job.availability_check or {}
+            if (
+                check.get("status") == "closed"
+                or check.get("reason") == "previously_inactive_not_reopened"
+                or (job.deadline_at is not None and job.deadline_at < datetime.now(UTC))
+            ):
+                job.is_active = False
+            # Role/fit evidence never reopens an inactive job, even without a prior check.
+            # Fresh collection through persistence is responsible for recruitment state.
         existing = session.scalar(
             select(JobScore).where(
                 JobScore.job_posting_id == job.id,

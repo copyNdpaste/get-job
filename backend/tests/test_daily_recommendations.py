@@ -272,3 +272,20 @@ def test_established_company_preference_keeps_unknown_size_above_known_tiny() ->
         ordered = [item.job_posting_id for item in batch.items]
         assert ordered[0] == funded_job.id
         assert ordered[-1] == tiny_job.id
+
+
+def test_recommendations_exclude_old_publication_and_expired_deadlines():
+    engine = _engine()
+    with Session(engine) as session:
+        jobs = _seed(session)
+        jobs[0].posted_at = datetime(2024, 1, 1, tzinfo=UTC)
+        jobs[1].deadline_at = datetime(2025, 1, 1, tzinfo=UTC)
+        jobs[2].is_hidden = False
+        session.flush()
+        batch = generate_daily_recommendations(
+            session, Settings(daily_recommendation_cooldown_days=0), date(2026, 10, 14)
+        )
+        selected = {item.job_posting_id for item in batch.items}
+        assert jobs[2].id in selected
+        assert jobs[0].id not in selected
+        assert jobs[1].id not in selected

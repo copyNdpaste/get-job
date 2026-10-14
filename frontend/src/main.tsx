@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery } from "@tanstack/react-query";
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { lazy, StrictMode, Suspense, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { MapResponse } from "./JobMap";
 import { AnalysisPipeline } from "./AnalysisPipeline";
 import { AnalysisBudgetPanel } from "./AnalysisBudgetPanel";
 import "./styles.css";
 import "./advisor.css";
+
+const JobMap = lazy(() => import("./JobMap").then((module) => ({ default: module.JobMap })));
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000 } } });
@@ -31,6 +34,7 @@ const EXPERIENCE_OPTIONS = [
 const YEAR_OPTIONS = Array.from({ length: 21 }, (_item, year) => year);
 const SCORE_THRESHOLDS = [40, 50, 60, 70, 80, 90];
 const POSTED_PERIOD_OPTIONS = [
+  { value: "year", label: "올해 게시" },
   { value: "", label: "게시 기간 전체" },
   { value: "7", label: "최근 1주 게시" },
   { value: "14", label: "최근 2주 게시" },
@@ -82,6 +86,7 @@ type Job = {
   interview_count: number | null;
   experience_text: string | null;
   location: string | null;
+  availability_check?: { status: string; reason: string; checked_at: string } | null;
   posted_at: string | null;
   deadline_at: string | null;
   first_seen_at: string;
@@ -452,6 +457,7 @@ type JobFilters = {
   minFitScore: string;
   minValueScore: string;
   postedWithinDays: string;
+  datePolicyVersion?: number;
   includeUnknownPosted: boolean;
   sort: string;
   viewMode: JobView;
@@ -472,7 +478,7 @@ const DEFAULT_JOB_FILTERS: JobFilters = {
   interviewCounts: [],
   minFitScore: "",
   minValueScore: "",
-  postedWithinDays: "",
+  postedWithinDays: "year",
   includeUnknownPosted: false,
   sort: "latest",
   viewMode: "all",
@@ -575,8 +581,8 @@ function loadSavedFilters(): JobFilters {
       minValueScore: savedScore(saved.minValueScore),
       includeUnknownPosted: saved.includeUnknownPosted === true,
       postedWithinDays: typeof saved.postedWithinDays === "string" && POSTED_PERIOD_VALUES.has(saved.postedWithinDays)
-        ? saved.postedWithinDays
-        : "",
+        ? (saved.postedWithinDays === "" && saved.datePolicyVersion !== 1 ? "year" : saved.postedWithinDays)
+        : "year",
       sort: typeof saved.sort === "string" && FILTER_SORTS.has(saved.sort) ? saved.sort : "latest",
       viewMode: typeof saved.viewMode === "string" && JOB_VIEW_MODES.has(saved.viewMode as JobView)
         ? saved.viewMode as JobView
@@ -616,6 +622,7 @@ function seoulDateKey(now = new Date()): string {
 }
 
 function App() {
+  const [displayMode, setDisplayMode] = useState<"list" | "map">("list");
   const [initialFilters] = useState(loadSavedFilters);
   const [query, setQuery] = useState(initialFilters.query);
   const [source, setSource] = useState(initialFilters.source);
@@ -657,7 +664,8 @@ function App() {
   if (source !== "all") params.set("source", source);
   excludedSources.forEach((item) => params.append("exclude_source", item));
   if (postedWithinDays) {
-    params.set("posted_within_days", postedWithinDays);
+    if (postedWithinDays === "year") params.set("posted_in_year", new Date().getFullYear().toString());
+    else params.set("posted_within_days", postedWithinDays);
     if (includeUnknownPosted) params.set("include_unknown_posted", "true");
   }
   if (viewMode !== "hidden") {
@@ -686,6 +694,14 @@ function App() {
   const jobs = useQuery({
     queryKey: ["jobs", viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, includeUnknownPosted, sort],
     queryFn: ({ signal }) => getJson<JobResponse>(`/api/jobs?${params}`, signal),
+  });
+  const mapParams = new URLSearchParams(params);
+  mapParams.set("map_view", "true");
+  mapParams.set("limit", "5000");
+  const mapJobs = useQuery({
+    queryKey: ["job-map", mapParams.toString()],
+    queryFn: ({ signal }) => getJson<MapResponse>(`/api/jobs?${mapParams}`, signal),
+    enabled: displayMode === "map",
   });
   const stats = useQuery({ queryKey: ["stats"], queryFn: () => getJson<Stats>("/api/jobs/stats") });
   const dailyDates = useQuery({
@@ -764,6 +780,7 @@ function App() {
   useEffect(() => {
     if (!finishedSignature) return;
     void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    void queryClient.invalidateQueries({ queryKey: ["job-map"] });
     void queryClient.invalidateQueries({ queryKey: ["stats"] });
   }, [finishedSignature]);
   useEffect(() => {
@@ -785,6 +802,7 @@ function App() {
         minFitScore,
         minValueScore,
         postedWithinDays,
+        datePolicyVersion: 1,
         includeUnknownPosted,
         sort,
         viewMode,
@@ -836,6 +854,7 @@ function App() {
     onSuccess: () => {
       setNotice("로켓펀치 공고를 저장하고 분석했습니다.");
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-map"] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
     onError: (error) => setNotice(error instanceof Error ? error.message : "HTML 가져오기 실패"),
@@ -900,6 +919,7 @@ function App() {
       setNotice(result.hidden ? `${target} 숨겼습니다.` : `${target} 복원했습니다.`);
       setSelected([]);
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-map"] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
     onError: (error) => setNotice(error instanceof Error ? error.message : "숨김 처리 실패"),
@@ -938,6 +958,7 @@ function App() {
     },
     onSettled: (_data, _error, { jobId }) => {
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-map"] });
       void queryClient.invalidateQueries({ queryKey: ["job", jobId] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
@@ -957,6 +978,7 @@ function App() {
     onSuccess: (result) => {
       setNotice(result.status === "not_reviewed" ? "지원 완료 표시를 해제했습니다." : "지원 완료로 표시했습니다.");
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-map"] });
       void queryClient.invalidateQueries({ queryKey: ["job", result.job_id] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
@@ -1155,6 +1177,7 @@ function App() {
         <section className="workspace">
           <div className="workspace-head">
             <div><p className="section-kicker">JOB LIBRARY</p><h2>{viewTitle}</h2></div>
+            <div className="display-toggle" aria-label="공고 표시 방식">{(["list", "map"] as const).map((mode) => <button type="button" key={mode} aria-pressed={displayMode === mode} onClick={() => setDisplayMode(mode)}>{mode === "list" ? "목록" : "지도"}</button>)}</div>
           </div>
           <nav className="job-view-tabs" aria-label="공고 보관함">
             <button type="button" role="tab" aria-selected={viewMode === "all"} className={viewMode === "all" ? "active" : ""} onClick={() => changeViewMode("all")}><span>전체 공고</span><b>{(stats.data?.active ?? 0).toLocaleString()}</b></button>
@@ -1243,7 +1266,7 @@ function App() {
           </div>
           <div className="score-guide"><span><b>적합도</b> 지금 이력서로 필수업무를 수행할 수 있는 정도</span><span><b>지원가치</b> 적합도에 커리어 방향·현실적인 성장 기회를 더한 지원 우선순위</span><button className="score-info-button" aria-label="적합도와 지원가치 설명 보기" onClick={() => setScoreInfoOpen(true)}><i>i</i> 점수 설명</button></div>
 
-          {jobs.isLoading ? <LoadingRows /> : jobs.isError ? <Empty title="API에 연결할 수 없습니다" body="백엔드가 실행 중인지 확인해 주세요." /> : jobs.data?.items.length ? (
+          {displayMode === "map" ? <Suspense fallback={<LoadingRows />}><JobMap data={mapJobs.data} loading={mapJobs.isLoading || mapJobs.isFetching} error={mapJobs.isError} onEvidence={setEvidenceJobId} /></Suspense> : jobs.isLoading ? <LoadingRows /> : jobs.isError ? <Empty title="API에 연결할 수 없습니다" body="백엔드가 실행 중인지 확인해 주세요." /> : jobs.data?.items.length ? (
             <div className="job-table-wrap">
               <table className="job-table">
                 <thead><tr><th>관심</th><th>지원</th><th>숨김</th><th>비교</th><th>포지션</th><th>기술 스택</th><th>경력·근무지</th><th>적합도 / 추천 이력서</th><th>마감</th><th>게시일</th><th>링크</th></tr></thead>
@@ -1618,7 +1641,7 @@ function JobRow({ job, checked, favoritePending, applicationPending, visibilityP
     <td><button aria-label={`${job.title} 비교 선택`} className={checked ? "check checked" : "check"} onClick={onToggle}>{checked ? "✓" : ""}</button></td>
     <td><div className="position-cell"><div><span className={`source-pill ${job.source}`}>{sourceLabels[job.source] ?? job.source}</span>{job.duplicate_count > 1 && <span className="duplicate-pill">{job.duplicate_count}개 소스 묶음</span>}{isNew && <span className="new-pill" title="최근 7일 내 수집된 공고">신규</span>}{isApplied && <span className={`applied-pill ${job.application_status}`}>{applicationLabel}</span>}{job.is_hidden && <span className="hidden-pill">숨김</span>}</div><strong>{job.title}</strong><small>{job.company}</small></div></td>
     <td><div className="tech-list">{job.tech_stack.slice(0, 4).map((item) => <span key={item}>{item}</span>)}{job.tech_stack.length > 4 && <span>+{job.tech_stack.length - 4}</span>}</div></td>
-    <td><div className="meta-cell"><span>{job.experience_text || "경력 정보 없음"}</span><small>{job.location || "근무지 미상"}</small><small className="hiring-process-summary" title={job.hiring_process.join(" → ") || "공고에 채용 절차가 명시되지 않았습니다."}>{hiringProcessSummary(job)}</small></div></td>
+    <td><div className="meta-cell"><span>{job.experience_text || "경력 정보 없음"}</span><small>{job.location || "근무지 미상"}</small>{job.availability_check && <small title={`확인: ${new Date(job.availability_check.checked_at).toLocaleString("ko-KR")}`}>{job.availability_check.status === "open" ? "모집 중 확인" : job.availability_check.status === "closed" ? "마감 확인" : job.availability_check.status === "old" ? "올해 이전 게시" : "모집 상태 미확인"}</small>}<small className="hiring-process-summary" title={job.hiring_process.join(" → ") || "공고에 채용 절차가 명시되지 않았습니다."}>{hiringProcessSummary(job)}</small></div></td>
     <td><div className="score-cell"><div><span>적합</span><strong>{formatScore(job.total_fit_score)}</strong></div><div><span>가치</span><strong>{formatScore(job.application_value_score)}</strong></div><b>{job.recommendation_grade || job.grade || "미분석"}</b><button className="evidence-button" onClick={onEvidence} disabled={job.total_fit_score == null}>근거</button>{job.recommended_resume_type && <button className="resume-result-chip" onClick={onEvidence}>제출: {job.recommended_resume_type.replace(" 이력서", "")}</button>}</div></td>
     <td><div className={`deadline-cell ${deadline.tone}`}>{job.deadline_at ? <time dateTime={job.deadline_at}>{deadline.date}</time> : <span>{deadline.date}</span>}<strong>{deadline.countdown}</strong></div></td>
     <td><time>{new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "2-digit", day: "2-digit" }).format(new Date(job.posted_at ?? job.first_seen_at))}</time></td>

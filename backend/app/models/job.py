@@ -70,6 +70,8 @@ class JobPosting(TimestampMixin, Base):
     salary_max: Mapped[float | None] = mapped_column(Numeric(14, 2))
     salary_text: Mapped[str | None] = mapped_column(String(500))
     location: Mapped[str | None] = mapped_column(String(500), index=True)
+    availability_check: Mapped[dict[str, Any] | None] = mapped_column(JSON_TYPE)
+    workplace_coordinates: Mapped[dict[str, Any] | None] = mapped_column(JSON_TYPE)
     remote_type: Mapped[str | None] = mapped_column(String(100), index=True)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

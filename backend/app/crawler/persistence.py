@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.company_facts import merge_company_facts
 from app.crawler.domain import CollectedJob, UpsertResult
 from app.crawler.normalization import canonicalize_url, content_hash, normalize_name, normalize_text
+from app.job_locations import source_coordinates
 from app.models import Company, JobPosting, JobPostingSnapshot, JobSource
 
 
@@ -136,6 +137,17 @@ def upsert_collected_job(session: Session, source: JobSource, data: CollectedJob
             posting.content_hash = digest
             posting.last_changed_at = now
             status = "updated"
+
+    if posting.availability_check and is_open_by_deadline:
+        # A new collection invalidates the older check; scoring alone cannot do so.
+        if (
+            posting.availability_check.get("status") == "closed"
+            or posting.availability_check.get("reason") == "previously_inactive_not_reopened"
+        ):
+            posting.availability_check = None
+
+    # Recompute even on unchanged content; never retain coordinates for an old address.
+    posting.workplace_coordinates = source_coordinates(data.source_name, data.description_raw)
 
     snapshot_exists = session.scalar(
         select(JobPostingSnapshot.id).where(

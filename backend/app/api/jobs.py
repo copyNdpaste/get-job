@@ -12,6 +12,7 @@ from app.crawler.tracked import SUBMITTED_APPLICATION_STATUSES
 from app.db.session import get_db
 from app.deduplication import refresh_duplicate_groups
 from app.experience import parse_experience as _parse_experience
+from app.job_locations import map_location
 from app.models import Application, CandidateProfile, Company, JobPosting, JobScore, JobSource
 from app.resume_recommendation import enrich_resume_recommendation
 
@@ -111,6 +112,27 @@ class DuplicatePostingLink(BaseModel):
     is_active: bool
 
 
+class JobMapItem(BaseModel):
+    id: int
+    source: str
+    company: str
+    title: str
+    url: str
+    location: str | None
+    latitude: float | None
+    longitude: float | None
+    precision: Literal["source", "region", "unknown"]
+    total_fit_score: float | None
+    application_value_score: float | None
+
+
+class JobMapResponse(BaseModel):
+    items: list[JobMapItem]
+    total: int
+    limit: int
+    offset: int
+
+
 class JobListItem(BaseModel):
     id: int
     source: str
@@ -124,6 +146,7 @@ class JobListItem(BaseModel):
     interview_count: int | None
     experience_text: str | None
     location: str | None
+    availability_check: dict[str, Any] | None = None
     posted_at: datetime | None
     deadline_at: datetime | None
     first_seen_at: datetime
@@ -269,6 +292,7 @@ def _list_item(
         interview_count=job.interview_count,
         experience_text=job.experience_text,
         location=job.location,
+        availability_check=job.availability_check,
         posted_at=job.posted_at,
         deadline_at=job.deadline_at,
         first_seen_at=job.first_seen_at,
@@ -341,7 +365,7 @@ def _base_query():
     )
 
 
-@router.get("", response_model=JobListResponse)
+@router.get("", response_model=JobListResponse | JobMapResponse)
 def list_jobs(
     session: Annotated[Session, Depends(get_db)],
     q: str | None = None,
@@ -364,10 +388,14 @@ def list_jobs(
     collected_within_days: Annotated[int | None, Query(ge=1, le=90)] = None,
     posted_within_days: Annotated[int | None, Query(ge=1, le=365)] = None,
     include_unknown_posted: bool = False,
+    posted_in_year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    map_view: bool = False,
     sort: Literal["latest", "collected", "fit", "value", "company"] = "latest",
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> JobListResponse:
+) -> JobListResponse | JobMapResponse:
+    if not map_view and limit > 200:
+        raise HTTPException(status_code=422, detail="목록은 최대 200개까지 조회할 수 있습니다.")
     excluded_sources = list(
         dict.fromkeys(item.strip() for item in (exclude_source or []) if item.strip())
     )
@@ -408,6 +436,7 @@ def list_jobs(
             JobPosting.interview_count,
             JobPosting.experience_text,
             JobPosting.location,
+            JobPosting.availability_check,
             JobPosting.posted_at,
             JobPosting.deadline_at,
             JobPosting.first_seen_at,
@@ -464,12 +493,20 @@ def list_jobs(
             JobPosting.first_seen_at >= datetime.now(UTC) - timedelta(days=collected_within_days)
         )
     if posted_within_days is not None:
-        posted_condition = (
-            JobPosting.posted_at >= datetime.now(UTC) - timedelta(days=posted_within_days)
+        posted_condition = JobPosting.posted_at >= datetime.now(UTC) - timedelta(
+            days=posted_within_days
         )
         if include_unknown_posted:
             posted_condition = or_(posted_condition, JobPosting.posted_at.is_(None))
         conditions.append(posted_condition)
+    if posted_in_year is not None:
+        # Korean calendar year, not the UTC date or first collection date.
+        start = datetime(posted_in_year, 1, 1, tzinfo=UTC) - timedelta(hours=9)
+        end = datetime(posted_in_year + 1, 1, 1, tzinfo=UTC) - timedelta(hours=9)
+        year_condition = and_(JobPosting.posted_at >= start, JobPosting.posted_at < end)
+        if include_unknown_posted:
+            year_condition = or_(year_condition, JobPosting.posted_at.is_(None))
+        conditions.append(year_condition)
     if source:
         conditions.append(JobSource.name == source)
     if excluded_sources:
@@ -534,6 +571,23 @@ def list_jobs(
         ),
     }[sort]
     ordered_query = query.order_by(*orders, JobPosting.id.desc())
+    if map_view:
+        ordered_query = (
+            _base_query()
+            .where(*conditions)
+            .order_by(*orders, JobPosting.id.desc())
+            .with_only_columns(
+                JobPosting.id,
+                JobSource.name.label("source"),
+                Company.name.label("company"),
+                JobPosting.title,
+                JobPosting.url,
+                JobPosting.location,
+                JobPosting.workplace_coordinates,
+                JobScore.total_fit_score,
+                JobScore.application_value_score,
+            )
+        )
     needs_post_filter = bool(
         technologies
         or excluded_technologies
@@ -573,6 +627,26 @@ def list_jobs(
     else:
         rows = session.execute(ordered_query.limit(limit).offset(offset)).all()
         total = session.scalar(count_query) or 0
+    if map_view:
+        return JobMapResponse(
+            items=[
+                JobMapItem(
+                    id=row.id,
+                    source=row.source,
+                    company=row.company,
+                    title=row.title,
+                    url=row.url,
+                    location=row.location,
+                    **map_location(row.location, row.workplace_coordinates),
+                    total_fit_score=row.total_fit_score,
+                    application_value_score=row.application_value_score,
+                )
+                for row in rows
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
     duplicate_links = _duplicate_links(session, list(rows))
     return JobListResponse(
         items=[_list_item(row, duplicate_links.get(row[0].duplicate_group_id)) for row in rows],

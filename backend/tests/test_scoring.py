@@ -198,13 +198,33 @@ def test_jobplanet_verified_development_role_is_scored_with_source_skill_tags() 
         score = session.scalar(
             select(JobScore).where(JobScore.job_posting_id == result.job_posting_id)
         )
-        assert posting.is_active is True
+        assert posting.is_active is False
         assert score is not None
         assert score.grade in {"S", "A", "B", "C"}
         evaluated_skills = {
             reason["skill"] for reason in [*score.matching_reasons, *score.missing_skills]
         }
         assert {"Python", "Node.js", "NestJS", "Go"}.issubset(evaluated_skills)
+        for check in (
+            {"status": "closed", "reason": "http_410"},
+            {"status": "unknown", "reason": "previously_inactive_not_reopened"},
+        ):
+            posting.is_active = False
+            posting.availability_check = check
+            score_jobs(session, job_ids={posting.id}, skip_existing=True)
+            assert posting.is_active is False
+
+        upsert_collected_job(session, source, CollectedJob(
+            source_name="jobplanet", external_job_id="verified-devops",
+            company_name="Synthetic Platform Labs", title=posting.title, url=posting.url,
+            description_raw=posting.description_raw or "",
+            description_text=posting.description_text or "",
+            tech_stack=posting.tech_stack,
+        ))
+        assert posting.availability_check is None
+        score_jobs(session, job_ids={posting.id}, skip_existing=True)
+        assert posting.is_active is True
+
 
 
 def test_jobplanet_fit_score_at_cutoff_is_deactivated_when_score_is_reused() -> None:

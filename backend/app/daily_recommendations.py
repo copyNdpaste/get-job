@@ -80,6 +80,7 @@ def generate_daily_recommendations(
         JobScore.application_value_score.desc()
     )
 
+    year_start = datetime(target_date.year, 1, 1, tzinfo=ZoneInfo(settings.daily_digest_timezone))
     rows = session.execute(
         select(
             JobPosting.id,
@@ -94,6 +95,8 @@ def generate_daily_recommendations(
         .where(
             JobPosting.is_primary_posting.is_(True),
             JobPosting.is_active.is_(True),
+            or_(JobPosting.posted_at.is_(None), JobPosting.posted_at >= year_start),
+            or_(JobPosting.deadline_at.is_(None), JobPosting.deadline_at >= datetime.now(UTC)),
             JobPosting.is_hidden.is_(False),
             or_(
                 Application.status.is_(None),
