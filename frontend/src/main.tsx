@@ -1004,8 +1004,9 @@ function App() {
     [aiModel, aiStatus.data?.models],
   );
   const selectedJobs = (jobs.data?.items ?? []).filter((job) => selected.includes(job.id));
-  const totalResultCount = jobs.data?.total ?? 0;
-  const visibleResultCount = jobs.data?.items.length ?? 0;
+  const currentResults = displayMode === "map" ? mapJobs : jobs;
+  const totalResultCount = currentResults.data?.total ?? 0;
+  const visibleResultCount = currentResults.data?.items.length ?? 0;
   const restoringSelection = selectedJobs.length > 0 && selectedJobs.every((job) => job.is_hidden);
   const viewTitle = viewMode === "recent" ? "최근 7일 신규 수집" : viewMode === "favorites" ? "관심 공고" : viewMode === "applied" ? "지원 완료 공고" : viewMode === "hidden" ? "숨긴 공고" : "개발 공고 탐색";
   const resultScope = viewMode === "recent" ? "게시일과 무관하게 최근 7일 안에 처음 수집한 공고" : viewMode === "favorites" ? "관심 공고" : viewMode === "applied" ? "지원 완료 공고" : viewMode === "hidden" ? "숨긴 공고" : "전체 일치 공고";
@@ -1260,9 +1261,9 @@ function App() {
               <button type="button" onClick={resetFilters}>필터 초기화</button>
             </div>
           </div>
-          <div className="result-summary" role="status" aria-live="polite" aria-busy={jobs.isLoading || jobs.isFetching}>
-            <div><span>FILTER RESULTS</span><strong>{jobs.isLoading ? "계산 중…" : jobs.isError ? "집계 실패" : `총 ${totalResultCount.toLocaleString()}개`}</strong>{jobs.isFetching && !jobs.isLoading && <i>갱신 중</i>}</div>
-            {!jobs.isLoading && !jobs.isError && <p>{visibleResultCount < totalResultCount ? `${resultScope} ${totalResultCount.toLocaleString()}개 중 현재 ${visibleResultCount.toLocaleString()}개를 표시합니다.` : `${resultScope} ${visibleResultCount.toLocaleString()}개를 모두 표시합니다.`}</p>}
+          <div className="result-summary" role="status" aria-live="polite" aria-busy={currentResults.isLoading || currentResults.isFetching}>
+            <div><span>FILTER RESULTS</span><strong>{currentResults.isLoading ? "계산 중…" : currentResults.isError ? "집계 실패" : `총 ${totalResultCount.toLocaleString()}개`}</strong>{currentResults.isFetching && !currentResults.isLoading && <i>갱신 중</i>}</div>
+            {!currentResults.isLoading && !currentResults.isError && <p>{visibleResultCount < totalResultCount ? `${resultScope} ${totalResultCount.toLocaleString()}개 중 현재 ${visibleResultCount.toLocaleString()}개를 표시합니다.` : `${resultScope} ${visibleResultCount.toLocaleString()}개를 모두 표시합니다.`}</p>}
           </div>
           <div className="score-guide"><span><b>적합도</b> 지금 이력서로 필수업무를 수행할 수 있는 정도</span><span><b>지원가치</b> 적합도에 커리어 방향·현실적인 성장 기회를 더한 지원 우선순위</span><button className="score-info-button" aria-label="적합도와 지원가치 설명 보기" onClick={() => setScoreInfoOpen(true)}><i>i</i> 점수 설명</button></div>
 
