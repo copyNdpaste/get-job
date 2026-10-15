@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     ai_analysis_batch_reviews: int = Field(default=2, ge=0, le=10)
     ai_analysis_min_fit: float = Field(default=60, ge=0, le=100)
     ai_analysis_after_crawl: bool = False
+    ai_preference_scoring: bool = False
+    ai_preferences_path: str = "/data/job-preferences.local.json"
+    ai_preference_batch_size: int = Field(default=2, ge=1, le=5)
+    ai_preference_poll_seconds: int = Field(default=30, ge=5, le=3600)
     crawler_respect_robots: bool = True
     crawler_cache_dir: str = ".cache/crawler"
     crawler_delay_min_seconds: float = 2.0

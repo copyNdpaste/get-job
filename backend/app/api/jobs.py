@@ -122,6 +122,7 @@ class JobMapItem(BaseModel):
     latitude: float | None
     longitude: float | None
     precision: Literal["source", "region", "unknown"]
+    score_origin: Literal["ai", "rules"] = "rules"
     total_fit_score: float | None
     application_value_score: float | None
 
@@ -168,6 +169,9 @@ class JobListItem(BaseModel):
     recommended_resume_id: str | None
     recommended_resume_label: str | None
     recommended_resume_score: float | None
+    score_origin: Literal["ai", "rules"] = "rules"
+    score_model: str | None = None
+    score_evaluated_at: datetime | None = None
     application_status: str
     duplicate_count: int = 1
     duplicate_postings: list[DuplicatePostingLink] = Field(default_factory=list)
@@ -181,6 +185,7 @@ class JobListResponse(BaseModel):
 
 
 class JobDetail(JobListItem):
+    ai_evaluation: dict[str, Any] | None = None
     company_profile: CompanyProfile
     description_text: str | None
     main_tasks: list[str]
@@ -320,6 +325,13 @@ def _list_item(
         recommended_resume_score=(
             resume_recommendation.get("recommended_score") if resume_recommendation else None
         ),
+        score_origin="ai" if score and score.scoring_version == "ai_preference_v1" else "rules",
+        score_model=(score.evidence_json or {}).get("preference_evaluation", {}).get("model")
+        if score
+        else None,
+        score_evaluated_at=score.scored_at
+        if score and score.scoring_version == "ai_preference_v1"
+        else None,
         application_status=application.status if application else "not_reviewed",
         duplicate_count=max(1, len(duplicate_postings or [])),
         duplicate_postings=duplicate_postings or [],
@@ -390,6 +402,7 @@ def list_jobs(
     include_unknown_posted: bool = False,
     posted_in_year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
     map_view: bool = False,
+    ai_scored_only: bool = False,
     sort: Literal["latest", "collected", "fit", "value", "company"] = "latest",
     limit: Annotated[int, Query(ge=1, le=5000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -451,6 +464,8 @@ def list_jobs(
             JobScore.application_value_score,
             JobScore.application_probability_score,
             JobScore.grade,
+            JobScore.scoring_version,
+            JobScore.scored_at,
             JobScore.evidence_json,
         ),
     )
@@ -463,6 +478,8 @@ def list_jobs(
     )
     conditions = []
     conditions.append(JobPosting.is_primary_posting.is_(True))
+    if ai_scored_only:
+        conditions.append(JobScore.scoring_version == "ai_preference_v1")
     if active_only:
         conditions.extend(
             [
@@ -586,6 +603,7 @@ def list_jobs(
                 JobPosting.workplace_coordinates,
                 JobScore.total_fit_score,
                 JobScore.application_value_score,
+                JobScore.scoring_version,
             )
         )
     needs_post_filter = bool(
@@ -638,6 +656,7 @@ def list_jobs(
                     url=row.url,
                     location=row.location,
                     **map_location(row.location, row.workplace_coordinates),
+                    score_origin="ai" if row.scoring_version == "ai_preference_v1" else "rules",
                     total_fit_score=row.total_fit_score,
                     application_value_score=row.application_value_score,
                 )
@@ -901,6 +920,7 @@ def job_detail(
     )
     return JobDetail(
         **item.model_dump(),
+        ai_evaluation=evidence.get("preference_evaluation"),
         company_profile=_company_profile(company),
         description_text=job.description_text,
         main_tasks=job.main_tasks or [],

@@ -18,6 +18,7 @@ def test_required_tables_are_registered() -> None:
         "private_documents",
         "job_scores",
         "job_ai_analyses",
+        "preference_evaluations",
         "applications",
         "crawl_runs",
         "daily_recommendation_batches",

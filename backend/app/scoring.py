@@ -311,6 +311,9 @@ def _is_jobplanet_development_role(job: JobPosting, excluded_reasons: tuple[str,
 
 
 def _exclude_low_fit_jobplanet(job: JobPosting, fit_score: float) -> None:
+    from app.config import get_settings
+    if get_settings().ai_preference_scoring:
+        return
     source = job.source
     if (
         source is not None
@@ -891,6 +894,9 @@ def score_jobs(
                 JobScore.candidate_profile_id == profile.id,
             )
         )
+        if existing is not None and existing.scoring_version == "ai_preference_v1":
+            # Only another validated AI evaluation may replace an AI score.
+            continue
         if (
             existing is not None
             and skip_existing

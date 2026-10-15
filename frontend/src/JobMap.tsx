@@ -8,6 +8,7 @@ import "./job-map.css";
 export type MapJob = {
   id: number; source: string; company: string; title: string; url: string;
   location: string | null; latitude: number | null; longitude: number | null;
+  score_origin?: "ai" | "rules";
   precision: "source" | "region" | "unknown";
   total_fit_score: number | null; application_value_score: number | null;
 };
@@ -91,7 +92,7 @@ export function JobMap({ data, loading, error, onEvidence }: {
       <aside className="map-job-panel"><h3>{selected.length ? `선택한 위치 · ${jobs.length}개` : `위치 미확인 · ${unknown}개`}</h3>
         {!selected.length && <p>지도 표시를 선택하세요. 좌표 없는 공고는 주소로 검색할 수 있어요.</p>}
         {jobs.map((job) => <article key={job.id}><span>{job.company}</span><button type="button" onClick={() => onEvidence(job.id)}>{job.title}</button><p>{job.location || "근무지 미기재"}</p>
-          <small>{job.precision === "region" ? "도시 중심 · 주소 확인 필요" : job.precision === "source" ? "원문 제공 좌표" : "좌표 미확인"} · 적합도 {job.total_fit_score ?? "—"} · 지원가치 {job.application_value_score ?? "—"}</small>
+          <small>{job.precision === "region" ? "도시 중심 · 주소 확인 필요" : job.precision === "source" ? "원문 제공 좌표" : "좌표 미확인"} · {job.score_origin === "ai" ? "AI 평가" : "AI 대기 · 규칙"} · 적합도 {job.total_fit_score ?? "—"} · 지원가치 {job.application_value_score ?? "—"}</small>
           <div><a href={job.url} target="_blank" rel="noreferrer">원문 공고 ↗</a>{job.location && <a href={`https://map.naver.com/p/search/${encodeURIComponent(job.location)}`} target="_blank" rel="noreferrer">주소 검색 ↗</a>}</div>
         </article>)}
       </aside></div>

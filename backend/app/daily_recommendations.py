@@ -65,19 +65,24 @@ def generate_daily_recommendations(
         )
 
     # Company evidence affects ordering only; unknown size is not a tiny company.
-    organization_priority = case(
-        (and_(
-            Company.employee_count >= 30,
-            func.lower(Company.investment_stage).in_(
-                ["series a", "series b", "series c", "series d", "series e", "series f"]
+    organization_priority = (
+        case(
+            (
+                and_(
+                    Company.employee_count >= 30,
+                    func.lower(Company.investment_stage).in_(
+                        ["series a", "series b", "series c", "series d", "series e", "series f"]
+                    ),
+                ),
+                0,
             ),
-        ), 0),
-        (Company.employee_count >= 30, 1),
-        (Company.employee_count.is_(None), 2),
-        (Company.employee_count >= 20, 3),
-        else_=4,
-    ) if settings.daily_recommendation_prefer_established else (
-        JobScore.application_value_score.desc()
+            (Company.employee_count >= 30, 1),
+            (Company.employee_count.is_(None), 2),
+            (Company.employee_count >= 20, 3),
+            else_=4,
+        )
+        if settings.daily_recommendation_prefer_established and not settings.ai_preference_scoring
+        else (JobScore.application_value_score.desc())
     )
 
     year_start = datetime(target_date.year, 1, 1, tzinfo=ZoneInfo(settings.daily_digest_timezone))
@@ -103,6 +108,11 @@ def generate_daily_recommendations(
                 Application.status.notin_(SUBMITTED_APPLICATION_STATUSES),
             ),
             JobScore.grade != "Excluded",
+            *(
+                [JobScore.scoring_version == "ai_preference_v1"]
+                if settings.ai_preference_scoring
+                else []
+            ),
             JobScore.total_fit_score >= settings.daily_recommendation_min_fit,
             JobScore.application_value_score >= settings.daily_recommendation_min_value,
         )

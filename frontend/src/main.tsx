@@ -86,6 +86,9 @@ type Job = {
   interview_count: number | null;
   experience_text: string | null;
   location: string | null;
+  score_origin?: "ai" | "rules";
+  score_model?: string | null;
+  score_evaluated_at?: string | null;
   availability_check?: { status: string; reason: string; checked_at: string } | null;
   posted_at: string | null;
   deadline_at: string | null;
@@ -169,6 +172,7 @@ type ResumeRecommendation = {
 };
 
 type JobDetail = Job & {
+  ai_evaluation?: { questions: string[]; unknowns: string[]; summary: string } | null;
   company_profile: CompanyProfile;
   main_tasks: string[];
   requirements: string[];
@@ -623,6 +627,17 @@ function seoulDateKey(now = new Date()): string {
 
 function App() {
   const [displayMode, setDisplayMode] = useState<"list" | "map">("list");
+  const [aiScoredOnly, setAiScoredOnly] = useState(true);
+  const preferenceStatus = useQuery<{enabled: boolean; model: string; total: number; counts: Record<string, number>; after_crawl: boolean; last_completed_at: string | null}>({
+    queryKey: ["preference-status"], queryFn: () => getJson("/api/ai/preferences/status"), refetchInterval: 10_000,
+  });
+  useEffect(() => {
+    if (preferenceStatus.data?.last_completed_at) {
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-map"] });
+      void queryClient.invalidateQueries({ queryKey: ["daily-recommendations"] });
+    }
+  }, [preferenceStatus.data?.last_completed_at]);
   const [initialFilters] = useState(loadSavedFilters);
   const [query, setQuery] = useState(initialFilters.query);
   const [source, setSource] = useState(initialFilters.source);
@@ -660,6 +675,7 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const params = new URLSearchParams({ limit: "200", sort });
+  if (preferenceStatus.data?.enabled && aiScoredOnly) params.set("ai_scored_only", "true");
   if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
   if (source !== "all") params.set("source", source);
   excludedSources.forEach((item) => params.append("exclude_source", item));
@@ -692,7 +708,7 @@ function App() {
   }
 
   const jobs = useQuery({
-    queryKey: ["jobs", viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, includeUnknownPosted, sort],
+    queryKey: ["jobs", preferenceStatus.data?.enabled, aiScoredOnly, viewMode, debouncedQuery, source, excludedSources.join("|"), technologies.join("|"), excludedTech.join("|"), experienceTypes.join("|"), minYears, maxYears, codingTests.join("|"), interviewCounts.join("|"), minFitScore, minValueScore, postedWithinDays, includeUnknownPosted, sort],
     queryFn: ({ signal }) => getJson<JobResponse>(`/api/jobs?${params}`, signal),
   });
   const mapParams = new URLSearchParams(params);
@@ -1180,6 +1196,7 @@ function App() {
             <div><p className="section-kicker">JOB LIBRARY</p><h2>{viewTitle}</h2></div>
             <div className="display-toggle" aria-label="공고 표시 방식">{(["list", "map"] as const).map((mode) => <button type="button" key={mode} aria-pressed={displayMode === mode} onClick={() => setDisplayMode(mode)}>{mode === "list" ? "목록" : "지도"}</button>)}</div>
           </div>
+          {preferenceStatus.data?.enabled && <div className="preference-progress" role="status"><div><strong>{preferenceStatus.data.model} {preferenceStatus.data.after_crawl ? "자동 " : ""}평가</strong><span>완료 {preferenceStatus.data.counts.completed ?? 0} · 분석 중 {preferenceStatus.data.counts.running ?? 0} · 대기 {preferenceStatus.data.counts.pending ?? 0} · 재시도/예산 대기 {(preferenceStatus.data.counts.failed ?? 0) + (preferenceStatus.data.counts.budget_limited ?? 0)}</span></div><label><input type="checkbox" checked={aiScoredOnly} onChange={(event) => setAiScoredOnly(event.target.checked)} />AI 평가 완료 공고만 보기</label><small>대기 중인 공고는 평가 후 자동 반영됩니다. 체크를 해제하면 기존 규칙 점수도 볼 수 있습니다. 회사 정보 미확인은 낮은 확신도와 확인 질문으로 구분합니다.</small></div>}
           <nav className="job-view-tabs" aria-label="공고 보관함">
             <button type="button" role="tab" aria-selected={viewMode === "all"} className={viewMode === "all" ? "active" : ""} onClick={() => changeViewMode("all")}><span>전체 공고</span><b>{(stats.data?.active ?? 0).toLocaleString()}</b></button>
             <button type="button" role="tab" aria-selected={viewMode === "recent"} className={viewMode === "recent" ? "active recent" : "recent"} onClick={() => changeViewMode("recent")}><span>✦ 최근 수집</span><b>{(stats.data?.new_last_7_days ?? 0).toLocaleString()}</b></button>
@@ -1621,10 +1638,7 @@ function ScoreInfoModal({ onClose }: { onClose: () => void }) {
   return <div className="score-info-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="score-info-modal" role="dialog" aria-modal="true" aria-labelledby="score-info-title">
       <div className="score-info-head"><div><p>SCORE GUIDE</p><h2 id="score-info-title">적합도와 지원가치는 무엇이 다른가요?</h2></div><button aria-label="점수 설명 닫기" onClick={onClose}>×</button></div>
-      <div className="score-info-grid">
-        <article><span className="score-info-number">01</span><h3>적합도 · 지금 수행할 수 있는가</h3><p>현재 이력서의 실제 근거로 이 공고의 역할과 필수업무를 바로 수행할 수 있는 정도입니다.</p><dl><div><dt>직무 방향</dt><dd>18%</dd></div><div><dt>필수 기술</dt><dd>22%</dd></div><div><dt>우대·인접 기술</dt><dd>8%</dd></div><div><dt>경력 조건</dt><dd>12%</dd></div><div><dt>업무 경험 근거</dt><dd>14%</dd></div><div><dt>운영·데이터</dt><dd>9%</dd></div><div><dt>설계·오너십</dt><dd>7%</dd></div><div><dt>품질·협업</dt><dd>5%</dd></div><div><dt>공고 근거 품질</dt><dd>5%</dd></div></dl><small>필수 기술은 공고의 강조도와 이력서 성과 근거 깊이까지 가중합니다. 기술 격차와 근거 부족은 연속 감점하고, 명확한 직무 불일치에만 상한을 둡니다.</small></article>
-        <article><span className="score-info-number">02</span><h3>지원가치 · 먼저 지원할 만한가</h3><p>현재 적합도뿐 아니라 내 커리어 방향과 현실적인 성장 여지를 함께 본 지원 우선순위입니다.</p><dl><div><dt>적합도</dt><dd>62%</dd></div><div><dt>직무·업무 방향성</dt><dd>23%</dd></div><div><dt>현실적인 성장 기회</dt><dd>10%</dd></div><div><dt>공고 근거 품질</dt><dd>5%</dd></div></dl><small>점수는 0.1점 단위로 표시합니다. 동점이면 서류 경쟁력, 다른 핵심 점수, 최신 공고 순서로 정렬합니다. 연봉·통근·회사 안정성은 현재 포함되지 않습니다.</small></article>
-      </div>
+      <div className="score-info-grid"><article><h3>적합도 · 지금 잘할 수 있나?</h3><p>GPT가 백엔드·제품 개발 업무, 실제 경력 연차, 필수·우대 기술과 이력서의 경험 근거를 비교해 0~100점으로 평가합니다. 전체 경력과 특정 언어 실무·개인 프로젝트를 구분합니다.</p></article><article><h3>지원가치 · 먼저 지원할 만한가?</h3><p>적합도에 서울·수도권 근무지, 확인된 매출·이익·투자, 직원·개발팀 규모와 업무 부담을 더해 GPT가 종합 판단합니다. 정보가 없으면 미확인과 확인 질문을 남깁니다. 투자 유치가 흑자를 의미하지는 않습니다.</p></article></div>
       <div className="score-info-example"><b>읽는 법</b><p><strong>적합도</strong>는 “내가 지금 잘할 수 있나?”, <strong>지원가치</strong>는 “여기에 먼저 지원할 이유가 충분한가?”에 답합니다. 두 점수가 다르면 근거 버튼에서 직무 방향과 기술 격차를 확인하세요.</p></div>
     </section>
   </div>;
@@ -1643,7 +1657,7 @@ function JobRow({ job, checked, favoritePending, applicationPending, visibilityP
     <td><div className="position-cell"><div><span className={`source-pill ${job.source}`}>{sourceLabels[job.source] ?? job.source}</span>{job.duplicate_count > 1 && <span className="duplicate-pill">{job.duplicate_count}개 소스 묶음</span>}{isNew && <span className="new-pill" title="최근 7일 내 수집된 공고">신규</span>}{isApplied && <span className={`applied-pill ${job.application_status}`}>{applicationLabel}</span>}{job.is_hidden && <span className="hidden-pill">숨김</span>}</div><strong>{job.title}</strong><small>{job.company}</small></div></td>
     <td><div className="tech-list">{job.tech_stack.slice(0, 4).map((item) => <span key={item}>{item}</span>)}{job.tech_stack.length > 4 && <span>+{job.tech_stack.length - 4}</span>}</div></td>
     <td><div className="meta-cell"><span>{job.experience_text || "경력 정보 없음"}</span><small>{job.location || "근무지 미상"}</small>{job.availability_check && <small title={`확인: ${new Date(job.availability_check.checked_at).toLocaleString("ko-KR")}`}>{job.availability_check.status === "open" ? "모집 중 확인" : job.availability_check.status === "closed" ? "마감 확인" : job.availability_check.status === "old" ? "올해 이전 게시" : "모집 상태 미확인"}</small>}<small className="hiring-process-summary" title={job.hiring_process.join(" → ") || "공고에 채용 절차가 명시되지 않았습니다."}>{hiringProcessSummary(job)}</small></div></td>
-    <td><div className="score-cell"><div><span>적합</span><strong>{formatScore(job.total_fit_score)}</strong></div><div><span>가치</span><strong>{formatScore(job.application_value_score)}</strong></div><b>{job.recommendation_grade || job.grade || "미분석"}</b><button className="evidence-button" onClick={onEvidence} disabled={job.total_fit_score == null}>근거</button>{job.recommended_resume_type && <button className="resume-result-chip" onClick={onEvidence}>제출: {job.recommended_resume_type.replace(" 이력서", "")}</button>}</div></td>
+    <td><div className="score-cell"><div><span>적합</span><strong>{formatScore(job.total_fit_score)}</strong></div><div><span>가치</span><strong>{formatScore(job.application_value_score)}</strong></div><b>{job.recommendation_grade || job.grade || "미분석"}</b><small title={job.score_evaluated_at ? new Date(job.score_evaluated_at).toLocaleString("ko-KR") : "AI 평가 전 임시 규칙 점수"}>{job.score_origin === "ai" ? `AI · ${job.score_model}` : "AI 분석 대기 · 규칙 점수"}</small><button className="evidence-button" onClick={onEvidence} disabled={job.total_fit_score == null}>근거</button>{job.recommended_resume_type && <button className="resume-result-chip" onClick={onEvidence}>제출: {job.recommended_resume_type.replace(" 이력서", "")}</button>}</div></td>
     <td><div className={`deadline-cell ${deadline.tone}`}>{job.deadline_at ? <time dateTime={job.deadline_at}>{deadline.date}</time> : <span>{deadline.date}</span>}<strong>{deadline.countdown}</strong></div></td>
     <td><time>{new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "2-digit", day: "2-digit" }).format(new Date(job.posted_at ?? job.first_seen_at))}</time></td>
     <td><div className={job.duplicate_postings.length > 1 ? "row-actions bundled" : "row-actions"}>{job.duplicate_postings.length > 1 ? job.duplicate_postings.map((posting) => <a className={posting.is_active ? "source-open-link" : "source-open-link closed"} aria-label={`${job.title} ${sourceLabels[posting.source] ?? posting.source} 원문 열기`} href={posting.url} target="_blank" rel="noreferrer" key={posting.id}>{sourceLabels[posting.source] ?? posting.source} ↗</a>) : <a className="open-link" aria-label={`${job.title} 원문 열기`} href={job.url} target="_blank" rel="noreferrer">↗</a>}</div></td>
@@ -1670,17 +1684,17 @@ function EvidenceModal({ job, loading, aiStatus, aiModel, onClose }: { job?: Job
     </div>
     {loading || !job ? <div className="evidence-loading">계산 근거를 불러오는 중…</div> : <>
       <div className="evidence-summary">
-        <div className="evidence-score-grid"><div><span>적합도</span><strong>{formatScore(job.total_fit_score)}</strong></div><div><span>지원가치</span><strong>{formatScore(job.application_value_score)}</strong></div><div><span>서류 경쟁력</span><strong>{formatScore(job.application_probability_score)}</strong></div></div>
-        <div><span>분석 요약 · 신뢰도 {job.score_confidence ?? "—"}</span><p>{job.score_summary ?? job.candidate_summary ?? "등록된 후보자 프로필"}</p><small>{job.score_formula}</small><div className="score-definitions"><p><b>적합도</b> {job.score_definitions.fit}</p><p><b>지원가치</b> {job.score_definitions.value}</p><p><b>서류 경쟁력</b> {job.score_definitions.probability}</p></div></div>
+        <div className="evidence-score-grid"><div><span>적합도</span><strong>{formatScore(job.total_fit_score)}</strong></div><div><span>지원가치</span><strong>{formatScore(job.application_value_score)}</strong></div>{job.score_origin !== "ai" && <div><span>서류 경쟁력 · 규칙</span><strong>{formatScore(job.application_probability_score)}</strong></div>}</div>
+        <div><span>분석 요약 · 신뢰도 {job.score_confidence ?? "—"}</span><p>{job.score_summary ?? job.candidate_summary ?? "등록된 후보자 프로필"}</p><small>{job.score_formula}</small><div className="score-definitions"><p><b>적합도</b> {job.score_definitions.fit}</p><p><b>지원가치</b> {job.score_definitions.value}</p>{job.score_origin !== "ai" && <p><b>서류 경쟁력</b> {job.score_definitions.probability}</p>}</div></div>
       </div>
-      <section className="risk-section"><h3>지원 판단</h3><p><b>{job.recommendation_grade ?? "미분석"}</b> · 백엔드 업무 비중 {job.backend_work_share == null ? "미확인" : `약 ${job.backend_work_share}%`} · Java/Spring {job.java_spring_status ?? "미확인"}</p><p>Node.js·TypeScript 전환 가능성: {job.node_typescript_transition ?? "미확인"}</p>{job.tech_stack.includes("Go") && <p>Go 전환 가능성: {job.go_transition ?? "미확인"}</p>}{job.recommendation_reasons.slice(0, 4).map((reason) => <p key={reason}>{reason}</p>)}</section>
+      {job.score_origin !== "ai" && <section className="risk-section"><h3>지원 판단</h3><p><b>{job.recommendation_grade ?? "미분석"}</b> · 백엔드 업무 비중 {job.backend_work_share == null ? "미확인" : `약 ${job.backend_work_share}%`} · Java/Spring {job.java_spring_status ?? "미확인"}</p><p>Node.js·TypeScript 전환 가능성: {job.node_typescript_transition ?? "미확인"}</p>{job.tech_stack.includes("Go") && <p>Go 전환 가능성: {job.go_transition ?? "미확인"}</p>}{job.recommendation_reasons.slice(0, 4).map((reason) => <p key={reason}>{reason}</p>)}</section>}
       <CompanyFactsSection company={job.company} profile={job.company_profile} />
       {job.resume_recommendation && <ResumeRecommendationSection recommendation={job.resume_recommendation} />}
-      <AnalysisPipeline key={job.id} jobId={job.id} />
+      {job.score_origin !== "ai" && <AnalysisPipeline key={job.id} jobId={job.id} />}
       <section className="local-ai-evidence">
         <div className="evidence-section-title"><h3>추가 교차검토 · 선택 모델</h3><button disabled={!aiStatus?.available || aiEvidence.isFetching} onClick={() => void aiEvidence.refetch()}>추가 호출 실행</button></div>
         {!aiEvidence.data && !aiEvidence.isFetching && <p className="local-ai-privacy">{aiModel}로 별도 호출합니다. 위의 저비용 분석 예산에는 포함되지 않습니다.</p>}
-        {!aiStatus?.available ? <p className="local-ai-unavailable">{aiStatus?.message ?? "로컬 AI 상태를 확인하는 중입니다."} 외부 유료 API로 자동 전환하지 않습니다.</p> : aiEvidence.isLoading ? <p className="local-ai-loading">이력서와 공고 근거를 로컬 모델로 교차검토하는 중…</p> : aiEvidence.isError ? <p className="local-ai-unavailable">{aiEvidence.error instanceof Error ? aiEvidence.error.message : "로컬 AI 분석을 완료하지 못했습니다."} 규칙 기반 점수는 그대로 유지됩니다.</p> : aiEvidence.data && <>
+        {!aiStatus?.available ? <p className="local-ai-unavailable">{aiStatus?.message ?? "로컬 AI 상태를 확인하는 중입니다."} 외부 유료 API로 자동 전환하지 않습니다.</p> : aiEvidence.isLoading ? <p className="local-ai-loading">이력서와 공고 근거를 로컬 모델로 교차검토하는 중…</p> : aiEvidence.isError ? <p className="local-ai-unavailable">{aiEvidence.error instanceof Error ? aiEvidence.error.message : "로컬 AI 분석을 완료하지 못했습니다."} 저장된 점수는 그대로 유지됩니다.</p> : aiEvidence.data && <>
           <p className="local-ai-summary">{aiEvidence.data.summary}</p>
           <div className="local-ai-columns">
             <div><h4>AI가 확인한 강점</h4>{aiEvidence.data.strengths.length ? aiEvidence.data.strengths.map((strength) => <article className="match-card" key={strength.title}><div><strong>{strength.title}</strong><span className="strong-chip">근거 확인</span></div><EvidenceLines label="내 이력서" lines={[strength.profile_evidence]} /><EvidenceLines label="공고 근거" lines={[strength.job_evidence]} /></article>) : <p className="evidence-empty">추가로 확인된 강점이 없습니다.</p>}</div>
@@ -1692,7 +1706,7 @@ function EvidenceModal({ job, loading, aiStatus, aiModel, onClose }: { job?: Job
       </section>
       <section className="interview-prep-section">
         <div className="interview-prep-head">
-          <div><p>LLM INTERVIEW COACH</p><h3>이 공고 면접 준비 팩</h3><span>공고·이력서·규칙 점수를 근거로 예상 질문과 답변 골격을 만듭니다.</span></div>
+          <div><p>LLM INTERVIEW COACH</p><h3>이 공고 면접 준비 팩</h3><span>공고·이력서·평가 근거로 예상 질문과 답변 골격을 만듭니다.</span></div>
           <button type="button" disabled={!aiStatus?.available || interviewPrep.isPending} onClick={() => interviewPrep.mutate(Boolean(interviewPrep.data))}>{interviewPrep.isPending ? "생성 중…" : interviewPrep.data ? "다시 생성" : "면접 팩 생성"}</button>
         </div>
         {!aiStatus?.available ? <p className="interview-prep-empty">AI 연결 후 사용할 수 있습니다. 외부 API로 자동 전환하지 않습니다.</p> : interviewPrep.isError ? <p className="interview-prep-error">{interviewPrep.error instanceof Error ? interviewPrep.error.message : "면접 준비 팩을 만들지 못했습니다."}</p> : !interviewPrep.data ? <p className="interview-prep-empty">필요할 때만 생성하며, 같은 공고·프로필·모델 결과는 로컬 DB 캐시를 재사용합니다.</p> : <>
@@ -1709,15 +1723,16 @@ function EvidenceModal({ job, loading, aiStatus, aiModel, onClose }: { job?: Job
           <small className="local-ai-privacy">{interviewPrep.data.cached ? "입력이 같아 저장된 분석을 재사용했습니다." : "새 분석을 생성해 로컬 DB에 캐시했습니다."} · {interviewPrep.data.model}</small>
         </>}
       </section>
-      <section className="breakdown-section"><div className="evidence-section-title"><h3>점수 산정 기준</h3><span>{job.scoring_version}</span></div>
-        <div className="breakdown-grid">{job.score_breakdown.map((item) => <div className={item.weight < 0 ? "breakdown-item penalty" : "breakdown-item"} key={item.label}><div><span>{item.label}</span><b>{item.weight < 0 ? `−${formatScore(item.score)}점` : `${item.weight}%`}</b></div><i><em style={{ width: `${Math.min(100, item.score)}%` }} /></i><small>{item.weight < 0 ? item.reason : `${formatScore(item.score)} / 100 · ${item.reason ?? ""}`}</small><EvidenceLines label="내 이력서" lines={item.profile_evidence} /><EvidenceLines label="공고 근거" lines={item.job_evidence} /></div>)}</div>
+      <section className="breakdown-section"><div className="evidence-section-title"><h3>{job.score_origin === "ai" ? "GPT 평가 근거" : "AI 평가 전 규칙 점수"}</h3><span>{job.scoring_version}</span></div>
+        <div className="breakdown-grid">{job.score_breakdown.map((item) => <div className={item.weight < 0 ? "breakdown-item penalty" : "breakdown-item"} key={item.label}><div><span>{item.label}</span><b>{job.score_origin === "ai" ? `${formatScore(item.score)}점` : item.weight < 0 ? `−${formatScore(item.score)}점` : `${item.weight}%`}</b></div><i><em style={{ width: `${Math.min(100, item.score)}%` }} /></i><small>{item.weight < 0 ? item.reason : `${formatScore(item.score)} / 100 · ${item.reason ?? ""}`}</small><EvidenceLines label="내 이력서" lines={item.profile_evidence} /><EvidenceLines label="공고 근거" lines={item.job_evidence} /></div>)}</div>
       </section>
+      {job.ai_evaluation && <section className="preference-progress"><strong>{job.score_model} · {job.score_evaluated_at && new Date(job.score_evaluated_at).toLocaleString("ko-KR")}</strong><p>{job.ai_evaluation.summary}</p><h3>지원 전 확인할 질문</h3><ul>{job.ai_evaluation.questions.map((text) => <li key={text}>{text}</li>)}</ul><h3>아직 확인되지 않은 정보</h3><ul>{job.ai_evaluation.unknowns.map((text) => <li key={text}>{text}</li>)}</ul></section>}
       <div className="evidence-columns">
         <section><div className="evidence-section-title"><h3>강점 매칭</h3><span>{job.matching_reasons.length}개</span></div>
           <div className="evidence-list">{job.matching_reasons.length ? job.matching_reasons.map((reason) => <article className="match-card" key={reason.skill}><div><strong>{reason.skill}</strong><span className={reason.strength === "partial" ? "partial-chip" : "strong-chip"}>{reason.strength === "partial" ? "부분 경험" : "강점"}</span></div><EvidenceLines label="내 이력서" lines={reason.profile_evidence} /><EvidenceLines label="공고 근거" lines={reason.job_evidence} /></article>) : <p className="evidence-empty">직접 일치하는 기술이 없습니다.</p>}</div>
         </section>
         <section><div className="evidence-section-title"><h3>약점·보완점</h3><span>{job.missing_skills.length}개</span></div>
-          <div className="evidence-list">{job.missing_skills.length ? job.missing_skills.map((gap) => <article className={`gap-card ${gap.severity}`} key={`${gap.skill}-${gap.profile_note}`}><div><strong>{gap.skill}</strong><span>{gap.severity === "high" ? "큰 격차" : gap.severity === "medium" ? "보완 필요" : "확인 필요"}</span></div><p>{gap.profile_note}</p><EvidenceLines label="공고 근거" lines={gap.job_evidence} /></article>) : <p className="evidence-empty">뚜렷한 기술 격차가 없습니다.</p>}</div>
+          <div className="evidence-list">{job.missing_skills.length ? job.missing_skills.map((gap) => <article className={`gap-card ${gap.severity}`} key={`${gap.skill}-${gap.profile_note}`}><div><strong>{gap.skill}</strong><span>{gap.severity === "high" ? "큰 격차" : gap.severity === "medium" ? "보완 필요" : "확인 필요"}</span></div><p>{gap.profile_note}</p><EvidenceLines label="공고 근거" lines={gap.job_evidence} /></article>) : <p className="evidence-empty">{job.score_origin === "ai" ? "GPT 평가 근거와 지원 리스크·확인 질문을 참고하세요." : "뚜렷한 기술 격차가 없습니다."}</p>}</div>
         </section>
       </div>
       {job.risk_notes.length > 0 && <section className="risk-section"><h3>지원 리스크</h3>{job.risk_notes.map((risk) => <p key={risk}>⚠ {risk}</p>)}</section>}

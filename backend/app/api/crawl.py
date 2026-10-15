@@ -341,7 +341,10 @@ async def _run_collection(
             if source is not None:
                 source.last_crawled_at = run.finished_at
             session.commit()
-            if settings.ai_analysis_after_crawl and score_job_ids:
+            if settings.ai_analysis_after_crawl and settings.ai_preference_scoring:
+                from app.preference_worker import enqueue
+                enqueue(session, settings)
+            elif settings.ai_analysis_after_crawl and score_job_ids:
                 try:
                     await analyze_batch(session, settings, job_ids=score_job_ids)
                 except Exception:

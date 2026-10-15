@@ -219,6 +219,11 @@ async def recommend_jobs(
             or_(JobPosting.deadline_at.is_(None), JobPosting.deadline_at >= datetime.now(UTC)),
             JobPosting.is_hidden.is_(False),
             JobScore.total_fit_score.is_not(None),
+            *(
+                [JobScore.scoring_version == "ai_preference_v1"]
+                if settings.ai_preference_scoring
+                else []
+            ),
         )
     ).all()
     for row in rows:

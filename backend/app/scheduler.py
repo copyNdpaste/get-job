@@ -100,6 +100,13 @@ async def run_daily_cycle(settings: Settings) -> None:
         program_response.raise_for_status()
         company_response = await client.post("/api/companies/enrich")
         company_response.raise_for_status()
+        if settings.ai_preference_scoring:
+            preference_status = await client.get("/api/ai/preferences/status")
+            preference_status.raise_for_status()
+            if preference_status.json().get("enabled"):
+                queued = await client.post("/api/ai/preferences/enqueue")
+                queued.raise_for_status()
+            # The persistent worker finishes remaining jobs without holding up collection.
         recommendation_response = await client.post(
             "/api/daily-recommendations/generate",
             json={"notify_slack": settings.slack_notify_enabled},
