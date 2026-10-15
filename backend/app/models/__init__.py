@@ -7,6 +7,7 @@ from app.models.crawl import CrawlRun, JobSource
 from app.models.daily import DailyRecommendationBatch, DailyRecommendationItem
 from app.models.ecosystem import EcosystemCrawlRun, EcosystemOrganization, EcosystemProgram
 from app.models.job import JobPosting, JobPostingSnapshot
+from app.models.private_document import PrivateDocument
 from app.models.score import JobScore
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "JobAIAnalysis",
     "JobScore",
     "JobSource",
+    "PrivateDocument",
 ]

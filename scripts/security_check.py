@@ -16,7 +16,7 @@ SECRET = re.compile(
 )
 PERSONAL_PATH = re.compile(r"/(?:Users|home)/[^/\s\"']+/")
 PHONE = re.compile(r"(?<!\d)(?:01[016789]|\+82[- .]?10)[- .]?\d{3,4}[- .]?\d{4}(?!\d)")
-EMAIL = re.compile(r"[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})", re.I)
+EMAIL = re.compile(r"[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})", re.IGNORECASE)
 SAFE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "localhost"}
 
 
@@ -27,7 +27,12 @@ def git(*args: str) -> bytes:
 def sensitive_path(name: str) -> bool:
     path = PurePosixPath(name)
     parts = set(path.parts)
-    if name in {".env.example", "data/README.md", "data/.gitkeep"}:
+    if name in {
+        ".env.example",
+        "data/README.md",
+        "data/.gitkeep",
+        "backend/examples/candidate-profile.example.json",
+    }:
         return False
     return (
         path.name == ".DS_Store"
@@ -48,6 +53,11 @@ def sensitive_path(name: str) -> bool:
             }
         )
         or path.name in {"credentials.json", "Thumbs.db", "Desktop.ini"}
+        or path.name.startswith(("candidate-profile", "candidate-career-direction"))
+        or (
+            path.stem in {"resume", "portfolio", "profile-review", "resume-links"}
+            and path.suffix.lower() in {".json", ".txt"}
+        )
         or path.name.startswith("service-account")
         or bool(re.search(r"\.(?:local|private)\.", path.name))
         or path.suffix.lower()
@@ -97,7 +107,9 @@ def main() -> int:
     args = parser.parse_args()
     failures = set()
     names = set(
-        git("ls-files", "--cached", "--others", "--exclude-standard", "-z").decode().split("\0")
+        git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+        .decode()
+        .split("\0")
     )
     for name in sorted(names - {""}):
         if sensitive_path(name):
@@ -127,7 +139,9 @@ def main() -> int:
         ".DS_Store",
         "playwright-profile/session.json",
     ):
-        if subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT).returncode:
+        if subprocess.run(
+            ["git", "check-ignore", "-q", name], cwd=ROOT, check=False
+        ).returncode:
             failures.add("required local path is not ignored")
     if args.history:
         for line in git("rev-list", "--objects", "--all").decode().splitlines():
@@ -140,7 +154,10 @@ def main() -> int:
             for issue in content_issues(git("cat-file", kind.decode(), oid)):
                 failures.add(f"history: {issue}")
     if failures:
-        print("Security check failed (matched values and filenames are hidden):", file=sys.stderr)
+        print(
+            "Security check failed (matched values and filenames are hidden):",
+            file=sys.stderr,
+        )
         for failure in sorted(failures):
             print(f"- {failure}", file=sys.stderr)
         return 1

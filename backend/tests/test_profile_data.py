@@ -1,71 +1,104 @@
-import json
+from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
-from app.config import Settings
-from app.profile_data import default_candidate_profile, load_candidate_profile
+from app.db.base import Base
+from app.models import CandidateProfile
+from app.profile_data import (
+    default_candidate_profile,
+    ensure_candidate_profile,
+    save_candidate_profile,
+    validate_candidate_profile,
+)
 
 
-def test_default_profile_preserves_experience_and_skill_gaps() -> None:
+@pytest.fixture
+def profile_engine():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+
+def test_default_profile_is_synthetic_and_preserves_required_fields() -> None:
     profile = default_candidate_profile()
-
     assert profile["years_experience"] == 4
     assert "Python" in profile["skills"]["backend"]
-    assert "Kafka" in profile["skills"]["messaging"]
     assert "Go" in profile["skill_gaps"]["no_professional_experience"]
-    assert "PyTorch" in profile["skill_gaps"]["none"]
+    assert profile["resume_versions"] == ["backend", "backend_ai", "product_engineer"]
 
 
-def test_default_profile_has_all_resume_versions() -> None:
-    assert default_candidate_profile()["resume_versions"] == [
-        "backend",
-        "backend_ai",
-        "product_engineer",
-    ]
+def test_empty_database_gets_exactly_one_synthetic_profile(profile_engine) -> None:
+    with Session(profile_engine) as session, session.begin():
+        first = ensure_candidate_profile(session)
+        second = ensure_candidate_profile(session)
+        assert first.id == second.id
+        assert first.profile_json == default_candidate_profile()
 
 
-def test_local_candidate_profile_overrides_anonymous_example(tmp_path) -> None:
-    path = tmp_path / "candidate-profile.local.json"
-    profile = default_candidate_profile()
-    profile["summary"] = "local-only summary"
-    path.write_text(json.dumps(profile), encoding="utf-8")
+def test_existing_database_profile_is_never_replaced_or_loaded_from_files(
+    profile_engine,
+    monkeypatch,
+) -> None:
+    payload = default_candidate_profile()
+    payload["summary"] = "synthetic custom summary"
+    with Session(profile_engine) as session, session.begin():
+        row = CandidateProfile(name="custom candidate", profile_json=payload)
+        session.add(row)
+        session.flush()
+        profile_id = row.id
 
-    loaded, is_local = load_candidate_profile(
-        Settings(candidate_profile_path=str(path), ai_enabled=False)
-    )
+    def reject_file_read(*args, **kwargs):
+        raise AssertionError("startup must not read candidate files")
 
-    assert is_local is True
-    assert loaded["summary"] == "local-only summary"
-
-
-def test_invalid_local_candidate_profile_is_rejected(tmp_path) -> None:
-    path = tmp_path / "candidate-profile.local.json"
-    path.write_text('{"summary": "missing fields"}', encoding="utf-8")
-
-    with pytest.raises(ValueError, match="candidate profile is missing"):
-        load_candidate_profile(Settings(candidate_profile_path=str(path), ai_enabled=False))
+    monkeypatch.setattr(Path, "read_text", reject_file_read)
+    with Session(profile_engine) as session, session.begin():
+        row = ensure_candidate_profile(session)
+        assert row.id == profile_id
+        assert row.profile_json == payload
 
 
-def test_local_career_direction_sidecar_extends_profile_without_tracking_it(tmp_path) -> None:
-    path = tmp_path / "candidate-profile.local.json"
-    direction_path = tmp_path / "candidate-career-direction.local.json"
-    path.write_text(json.dumps(default_candidate_profile()), encoding="utf-8")
-    direction_path.write_text(
-        json.dumps(
-            {
-                "years_experience": 6,
-                "skill_experience_years": {"Node.js": 1.5, "TypeScript": 1.5},
-                "career_direction": {"primary_role": "backend"},
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_explicit_import_preserves_id_and_persists_direction(profile_engine) -> None:
+    with Session(profile_engine) as session, session.begin():
+        original_id = ensure_candidate_profile(session).id
+    payload = default_candidate_profile()
+    payload["summary"] = "synthetic imported summary"
+    payload["career_direction"] = {"primary_role": "backend"}
+    with Session(profile_engine) as session, session.begin():
+        assert save_candidate_profile(session, payload).id == original_id
+    with Session(profile_engine) as session:
+        rows = list(session.scalars(select(CandidateProfile)))
+        assert len(rows) == 1
+        assert rows[0].profile_json == payload
 
-    loaded, is_local = load_candidate_profile(
-        Settings(candidate_profile_path=str(path), ai_enabled=False)
-    )
 
-    assert is_local is True
-    assert loaded["years_experience"] == 6
-    assert loaded["skill_experience_years"]["Node.js"] == 1.5
-    assert loaded["career_direction"]["primary_role"] == "backend"
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"summary": "synthetic"},
+        {
+            "summary": "synthetic",
+            "years_experience": 1,
+            "achievements": [],
+            "skills": [],
+            "skill_gaps": {},
+        },
+    ],
+)
+def test_invalid_import_does_not_modify_existing_profile(profile_engine, payload) -> None:
+    with Session(profile_engine) as session, session.begin():
+        original_id = ensure_candidate_profile(session).id
+    with Session(profile_engine) as session, pytest.raises(ValueError):
+        save_candidate_profile(session, payload)
+    with Session(profile_engine) as session:
+        stored = session.get(CandidateProfile, original_id)
+        assert stored.profile_json == default_candidate_profile()
+
+
+def test_validation_errors_do_not_echo_private_values() -> None:
+    with pytest.raises(ValueError) as error:
+        validate_candidate_profile({"summary": "synthetic-sensitive-marker"})
+    assert "synthetic-sensitive-marker" not in str(error.value)

@@ -22,7 +22,6 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jobapp:local-development-only@db:5432/jobdb}
       APP_ENV: ${APP_ENV:-development}
       BACKEND_CORS_ORIGINS: http://localhost:41739,http://127.0.0.1:41739
-      CANDIDATE_PROFILE_PATH: ${CANDIDATE_PROFILE_PATH:-/data/candidate-profile.local.json}
       DIRECT_ATS_BOARD_PATH: ${DIRECT_ATS_BOARD_PATH:-/data/ats-boards.local.json}
       RESUME_DIRECTORY: ${RESUME_DIRECTORY:-/data/generated-resumes.local}
       CRAWLER_RESPECT_ROBOTS: ${CRAWLER_RESPECT_ROBOTS:-true}

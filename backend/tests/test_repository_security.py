@@ -54,6 +54,10 @@ def test_release_scanner_rejects_private_paths_and_real_contact_patterns() -> No
         "frontend/.env.production",
         "playwright/.auth/state.json",
         "secrets/api.json",
+        "backend/candidate-profile.json",
+        "candidate-career-direction.json",
+        "exports/resume.txt",
+        "exports/profile-review.json",
     ):
         assert scanner.sensitive_path(path)
     assert not scanner.sensitive_path(".env.example")

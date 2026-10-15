@@ -17,7 +17,6 @@ class Settings(BaseSettings):
         "http://localhost:41739",
         "http://127.0.0.1:41739",
     ]
-    candidate_profile_path: str = "/data/candidate-profile.local.json"
     resume_directory: str = "/data/generated-resumes.local"
     ai_enabled: bool = True
     ai_provider: str = "openai-compatible"

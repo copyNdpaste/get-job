@@ -2,43 +2,47 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.config import Settings, get_settings
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.candidate import CandidateProfile
 
 EXAMPLE_PROFILE_PATH = (
     Path(__file__).resolve().parent.parent / "examples" / "candidate-profile.example.json"
 )
 
 
-def load_candidate_profile(settings: Settings | None = None) -> tuple[dict[str, Any], bool]:
-    resolved_settings = settings or get_settings()
-    local_path = Path(resolved_settings.candidate_profile_path).expanduser()
-    path = local_path if local_path.is_file() else EXAMPLE_PROFILE_PATH
-    profile = json.loads(path.read_text(encoding="utf-8"))
-    if path == local_path:
-        direction_path = local_path.with_name("candidate-career-direction.local.json")
-        if direction_path.is_file():
-            direction = json.loads(direction_path.read_text(encoding="utf-8"))
-            if not isinstance(direction, dict):
-                raise ValueError(
-                    f"candidate career direction must be a JSON object: {direction_path}"
-                )
-            profile.update(direction)
-    _validate_profile(profile, path)
-    return profile, path == local_path
+def ensure_candidate_profile(session: Session) -> CandidateProfile:
+    """Keep the database authoritative; seed synthetic data only on an empty database."""
+    profile = session.scalar(select(CandidateProfile).order_by(CandidateProfile.id).limit(1))
+    if profile is None:
+        profile = CandidateProfile(name="기본 후보자", profile_json=default_candidate_profile())
+        session.add(profile)
+        session.flush()
+    return profile
+
+
+def save_candidate_profile(session: Session, payload: object) -> CandidateProfile:
+    """Explicitly import a profile without persisting an intermediate file or logging its data."""
+    validate_candidate_profile(payload)
+    profile = ensure_candidate_profile(session)
+    profile.profile_json = payload
+    session.flush()
+    return profile
 
 
 def default_candidate_profile() -> dict[str, Any]:
     profile = json.loads(EXAMPLE_PROFILE_PATH.read_text(encoding="utf-8"))
-    _validate_profile(profile, EXAMPLE_PROFILE_PATH)
+    validate_candidate_profile(profile)
     return profile
 
 
-def _validate_profile(profile: object, path: Path) -> None:
+def validate_candidate_profile(profile: object) -> None:
     if not isinstance(profile, dict):
-        raise ValueError(f"candidate profile must be a JSON object: {path}")
+        raise ValueError("candidate profile must be a JSON object")
     required = {"years_experience", "summary", "skills", "achievements", "skill_gaps"}
     missing = required - profile.keys()
     if missing:
-        raise ValueError(f"candidate profile is missing {', '.join(sorted(missing))}: {path}")
+        raise ValueError("candidate profile is missing required fields")
     if not isinstance(profile["skills"], dict) or not isinstance(profile["skill_gaps"], dict):
-        raise ValueError(f"candidate profile skills and skill_gaps must be objects: {path}")
+        raise ValueError("candidate profile skills and skill_gaps must be objects")

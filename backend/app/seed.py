@@ -2,18 +2,16 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 
-from app.config import get_settings
 from app.db.session import SessionLocal
 from app.deduplication import refresh_duplicate_groups
 from app.ecosystem_catalog import DEFAULT_ECOSYSTEM_ORGANIZATIONS
-from app.models import CandidateProfile, EcosystemOrganization, JobPosting, JobSource
-from app.profile_data import load_candidate_profile
+from app.models import EcosystemOrganization, JobPosting, JobSource
+from app.profile_data import ensure_candidate_profile
 from app.scoring import score_jobs
 from app.source_catalog import DEFAULT_JOB_SOURCES
 
 
 def seed() -> None:
-    profile_data, loaded_from_local_file = load_candidate_profile(get_settings())
     with SessionLocal.begin() as session:
         for definition in DEFAULT_JOB_SOURCES:
             source = session.scalar(select(JobSource).where(JobSource.name == definition.name))
@@ -61,13 +59,7 @@ def seed() -> None:
                 organization.source_url = definition.source_url
                 organization.operating_scale = definition.operating_scale
 
-        profile = session.scalar(
-            select(CandidateProfile).where(CandidateProfile.name == "기본 후보자")
-        )
-        if profile is None:
-            session.add(CandidateProfile(name="기본 후보자", profile_json=profile_data))
-        elif loaded_from_local_file:
-            profile.profile_json = profile_data
+        ensure_candidate_profile(session)
         session.execute(
             update(JobPosting)
             .where(

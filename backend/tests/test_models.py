@@ -15,6 +15,7 @@ def test_required_tables_are_registered() -> None:
         "job_postings",
         "job_posting_snapshots",
         "candidate_profiles",
+        "private_documents",
         "job_scores",
         "job_ai_analyses",
         "applications",

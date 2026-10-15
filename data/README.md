@@ -1,17 +1,13 @@
 # Local data
 
-`ats-boards.local.json` can extend the public direct-career-board catalog without committing
-company watchlists. It must contain only public ATS board metadata and no candidate information.
+Real candidate profiles and career direction belong in the local PostgreSQL
+`candidate_profiles` table. Startup never imports local profile JSON files.
+Only the synthetic profile under `backend/examples/` may be committed.
 
-Copy `backend/examples/candidate-profile.example.json` to
-`data/candidate-profile.local.json` and replace the example with your own resume evidence.
+Legacy private source documents can be preserved in `private_documents` before
+removing local originals after a verified database commit. Do not recreate
+profile JSON, resume text or private review exports under this directory.
 
-Everything else in this directory is ignored by Git. Do not force-add candidate profiles,
-resumes, exported databases, browser sessions, or model credentials.
-
-Place the three private resume PDFs under `data/generated-resumes.local/`. Keep the exact
-local filenames documented in the project README so the local preview links can find them.
-
-Personal Markdown notes must use an ignored name such as `data/application-notes.local.md`.
-Never put a real name, email address, phone number, resume excerpt, or private note into a
-tracked `.md` file. Durable application state belongs in the local PostgreSQL volume.
+`ats-boards.local.json` may contain public ATS board metadata, never candidate data.
+Everything except this README and `.gitkeep` is ignored. Database exports,
+browser sessions, credentials and private resume attachments must never be force-added.

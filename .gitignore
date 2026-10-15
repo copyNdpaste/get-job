@@ -70,3 +70,12 @@ playwright/.auth/
 credentials.json
 service-account*.json
 *.mobileprovision
+
+# Candidate records are database-only; keep accidental local exports out of Git.
+candidate-profile*.json
+candidate-career-direction*.json
+!backend/examples/candidate-profile.example.json
+resume.txt
+portfolio.txt
+profile-review.json
+resume-links.json

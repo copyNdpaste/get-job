@@ -71,16 +71,20 @@ Compose 내부 네트워크에서만 API와 통신합니다. DB는 `postgres_dat
 
 ## 개인 이력서 데이터
 
-저장소의 `backend/examples/candidate-profile.example.json`은 익명의 가상 데이터입니다. 사용자는 이 파일을
-`data/candidate-profile.local.json`으로 복사한 뒤 자신의 경력·기술·성과·보완점을 입력합니다.
-특정 기술의 실무 연차와 지원 방향은 같은 디렉터리의
-`candidate-career-direction.local.json`에 `skill_experience_years`, `career_direction`,
-`node_transition_evidence`로 분리할 수 있습니다. 두 파일은 모두 Git과 Docker 빌드 컨텍스트에서
-제외됩니다.
+실제 경력과 지원 방향은 로컬 PostgreSQL의 `candidate_profiles.profile_json`에서만 관리합니다.
+시작·재시작 시 로컬 프로필 JSON을 읽거나 DB 값을 덮어쓰지 않습니다. 빈 DB에서만 공개된 익명 예시를
+초기 데이터로 생성합니다. 기존 프로필과 분석·지원 이력의 ID는 유지합니다.
 
-`data/` 내의 개인 파일, `.env`, DB export, 이력서 PDF/DOCX, 브라우저 세션과 크롤러 캐시는
-Git에서 제외됩니다. 공개 push 전에는 반드시 `git status --short`와 staged diff를 확인하세요.
-로컬 프로필이 없으면 익명 예시로 시작하고, 로컬 파일을 추가한 뒤 재시작하면 동기화합니다.
+프로필을 명시적으로 갱신하려면 JSON을 표준 입력으로 전달해 `python -m app.import_candidate_profile`을
+실행합니다. 개인 데이터를 명령행 인자·셸 히스토리·로그·추적 파일에 넣지 마세요.
+입력 형식은 익명 예시를 참고하고, 지원 방향 필드도 같은 프로필에 포함합니다.
+
+이전 로컬 파일의 원문은 DB의 `private_documents`에 보존할 수 있습니다. 원문 내용은 API로 노출하지
+않으며, 이전 완료 후 로컬 원본은 DB 저장 내용과 일치하는지 확인한 뒤 제거합니다.
+개인 프로필 JSON·검토 자료·이력서 원문을 저장소 안에 다시 생성하지 마세요.
+
+`.env`, DB export, 이력서 PDF/DOCX, 브라우저 세션과 크롤러 캐시는 Git에서 제외됩니다.
+공개 push 전에는 `./scripts/security-check.sh --history`와 staged diff를 확인하세요.
 
 `data/generated-resumes.local/`에는 다음 로컬 전용 PDF 파일을 둡니다.
 
